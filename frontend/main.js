@@ -149,6 +149,27 @@ async function startNewSession() {
   appendLog('session-new', `── new session ${sessionId.slice(0, 8)} ──`);
 }
 
+async function loadPersona() {
+  try {
+    const info = await invoke('persona_info');
+    const avatar = document.getElementById('persona-avatar');
+    const name = document.getElementById('persona-name');
+    const tagline = document.getElementById('persona-tagline');
+    if (avatar && info.avatar_url) {
+      avatar.src = info.avatar_url;
+      avatar.alt = info.display_name ?? '';
+    }
+    if (name) name.textContent = info.display_name ?? '';
+    if (tagline) tagline.textContent = info.tagline ?? '';
+    if (info.display_name) {
+      document.title = info.display_name + ' · kotonia';
+    }
+  } catch (e) {
+    // Persona is decorative — don't block startup if the call fails.
+    console.error('persona_info failed', e);
+  }
+}
+
 async function refreshAuth() {
   try {
     const status = await invoke('auth_status');
@@ -415,6 +436,7 @@ listen('approval_request', (msg) => {
 });
 
 // Boot.
+loadPersona();
 refreshAuth();
 setInterval(refreshAuth, 5000);
 setSessionLabel();

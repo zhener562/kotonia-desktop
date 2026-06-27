@@ -37,6 +37,19 @@ pub struct AuthStatus {
     pub device_id_prefix: Option<String>,
 }
 
+/// Static persona descriptor surfaced to the frontend so the WebView
+/// can render Iris's name + avatar without hardcoding strings on both
+/// sides of the IPC boundary.
+#[tauri::command]
+pub fn persona_info() -> serde_json::Value {
+    serde_json::json!({
+        "key": crate::persona::IRIS.key,
+        "display_name": crate::persona::IRIS.display_name,
+        "tagline": crate::persona::IRIS.tagline,
+        "avatar_url": crate::persona::IRIS.avatar_url,
+    })
+}
+
 #[tauri::command]
 pub async fn auth_status() -> AuthStatus {
     let cfg = kotonia_cli::config::load();
@@ -270,6 +283,11 @@ async fn get_or_create_session(
         .map_err(|e| format!("provider `{model}`: {e}"))?;
     let mut agent_config = AgentConfig::new(ApprovalMode::Allowlist, /*in_place=*/ true);
     agent_config.kotonia_api_base = None;
+    // Iris persona: prepended to the agent's tool-aware base prompt so
+    // the model speaks in character while keeping all the bash / tool
+    // semantics intact. See `persona::IRIS` for the prompt and the rest
+    // of the character definition.
+    agent_config.persona_prefix = Some(crate::persona::IRIS.system_prompt.to_string());
     let mut agent = DispatchAgent::ReAct(Agent::new(&workspace.root, provider, agent_config));
 
     match HistoryStore::open(session_id) {

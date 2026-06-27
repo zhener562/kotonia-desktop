@@ -45,18 +45,37 @@ body {
 .brand {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
-.brand-mark {
-  color: var(--accent);
-  font-size: 18px;
-  line-height: 1;
+.brand-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  object-fit: cover;
+  object-position: center 20%;  /* faces sit slightly above center in portrait crops */
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  flex: 0 0 auto;
+}
+
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
 }
 
 .brand-name {
   font-weight: 600;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.3px;
+  font-size: 14px;
+}
+
+.brand-tagline {
+  font-size: 10px;
+  color: var(--fg-dim);
+  letter-spacing: 0.4px;
+  text-transform: lowercase;
 }
 
 .auth-status {

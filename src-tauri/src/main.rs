@@ -2,6 +2,7 @@
 
 mod bridge;
 mod commands;
+mod persona;
 mod state;
 
 use state::AppState;
@@ -32,6 +33,7 @@ fn main() {
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             commands::auth_status,
+            commands::persona_info,
             commands::submit_task,
             commands::respond_approval,
             commands::new_session,
