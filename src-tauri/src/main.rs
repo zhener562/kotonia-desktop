@@ -4,6 +4,7 @@ mod bridge;
 mod commands;
 mod persona;
 mod state;
+mod tts;
 
 use state::AppState;
 
@@ -40,6 +41,7 @@ fn main() {
             commands::open_login_help,
             commands::open_path,
             commands::resolve_preview_path,
+            commands::tts_speak,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

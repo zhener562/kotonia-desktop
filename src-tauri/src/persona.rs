@@ -15,6 +15,19 @@ pub struct Persona {
     pub tagline: &'static str,
     pub avatar_url: &'static str,
     pub system_prompt: &'static str,
+    pub voice: VoiceConfig,
+}
+
+/// TTS request shape used by `/api/voice/qwen3/tts/stream`. Currently
+/// Qwen3-TTS is the only supported engine for kotonia-desktop voice —
+/// it's the premium quality path on the kotonia.ai backend. Future
+/// fallback to Irodori / VoiceVox can be added by switching on
+/// `engine`.
+pub struct VoiceConfig {
+    pub engine: &'static str,
+    pub speaker: &'static str,
+    pub language: &'static str,
+    pub speed: f32,
 }
 
 pub const IRIS: Persona = Persona {
@@ -23,6 +36,17 @@ pub const IRIS: Persona = Persona {
     tagline: "android engineer · kotonia desktop",
     avatar_url: "persona/iris.png",
     system_prompt: IRIS_SYSTEM_PROMPT,
+    voice: VoiceConfig {
+        engine: "qwen3",
+        // Qwen3-TTS ships exactly one Japanese speaker preset
+        // (`Ono_Anna`); using it gives Iris a consistent JP voice
+        // without depending on the offline Base / clone server. Swap
+        // for a cloned voice once Qwen3-TTS Base (port 8896) is
+        // brought online again.
+        speaker: "Ono_Anna",
+        language: "ja",
+        speed: 1.0,
+    },
 };
 
 const IRIS_SYSTEM_PROMPT: &str = "あなたは Iris (アイリス) — 個人開発者の隣で動くアンドロイド型 AI パートナー。

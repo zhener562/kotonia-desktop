@@ -145,6 +145,32 @@ pub async fn respond_approval(
     }
 }
 
+/// Speak text in Iris's voice. Returns the `stream_id` immediately so
+/// the frontend can correlate the streamed `tts_chunk` / `tts_done` /
+/// `tts_error` events to this call (and ignore any in-flight events
+/// from a previous, now-cancelled stream).
+#[tauri::command]
+pub async fn tts_speak(app: AppHandle, text: String) -> Result<String, String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err("空文字は読めません".into());
+    }
+    let stream_id = uuid::Uuid::new_v4().to_string();
+    let text_owned = trimmed.to_string();
+    let stream_for_task = stream_id.clone();
+    let app_for_task = app.clone();
+    tokio::spawn(async move {
+        crate::tts::run_stream(
+            app_for_task,
+            stream_for_task,
+            text_owned,
+            &crate::persona::IRIS.voice,
+        )
+        .await;
+    });
+    Ok(stream_id)
+}
+
 #[tauri::command]
 pub async fn open_login_help(app: AppHandle) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;

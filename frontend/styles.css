@@ -113,6 +113,12 @@ body {
   border-color: var(--accent);
 }
 
+.top-actions button[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+
 .app-shell {
   flex: 1 1 auto;
   display: flex;

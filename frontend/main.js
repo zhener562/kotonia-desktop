@@ -26,6 +26,7 @@ const authStatusEl = document.getElementById('auth-status');
 const sessionLabelEl = document.getElementById('session-label');
 const btnNewSession = document.getElementById('btn-new-session');
 const btnClearLog = document.getElementById('btn-clear-log');
+const btnToggleVoice = document.getElementById('btn-toggle-voice');
 const btnTogglePreview = document.getElementById('btn-toggle-preview');
 const approvalModal = document.getElementById('approval-modal');
 const approvalReason = document.getElementById('approval-reason');
@@ -277,6 +278,100 @@ btnClearLog.addEventListener('click', () => {
   logEl.innerHTML = '';
 });
 
+// ── TTS playback (Iris voice) ────────────────────────────────────────
+// Toggle is OFF by default — autoplay policies in WebKit refuse to
+// schedule audio until a user gesture creates / resumes an
+// AudioContext. The toggle click doubles as that gesture.
+
+let voiceEnabled = false;
+let ttsAudioCtx = null;
+let ttsNextStartTime = 0;
+let ttsActiveStreamId = null;
+
+function setVoiceEnabled(enabled) {
+  voiceEnabled = enabled;
+  btnToggleVoice.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+  btnToggleVoice.textContent = enabled ? '🔊 voice' : '🔇 voice';
+  if (enabled) {
+    // Lazily create the AudioContext inside the user gesture so
+    // browsers don't block it. Resume if it was suspended after a
+    // previous toggle-off.
+    if (!ttsAudioCtx) {
+      try {
+        ttsAudioCtx = new AudioContext();
+      } catch (e) {
+        appendLog('error', 'AudioContext unavailable: ' + String(e));
+        voiceEnabled = false;
+        return;
+      }
+    }
+    if (ttsAudioCtx.state === 'suspended') ttsAudioCtx.resume();
+    ttsNextStartTime = ttsAudioCtx.currentTime;
+  } else {
+    if (ttsAudioCtx && ttsAudioCtx.state === 'running') {
+      ttsAudioCtx.suspend().catch(() => {});
+    }
+    // Drop the active stream so any in-flight chunks from the backend
+    // are ignored even if the toggle flips back on quickly.
+    ttsActiveStreamId = null;
+  }
+}
+
+btnToggleVoice.addEventListener('click', () => setVoiceEnabled(!voiceEnabled));
+
+async function speakIris(text) {
+  if (!voiceEnabled || !ttsAudioCtx) return;
+  const trimmed = (text || '').trim();
+  if (!trimmed) return;
+  try {
+    const streamId = await invoke('tts_speak', { text: trimmed });
+    // The latest call wins — older streams' chunks will be filtered
+    // out by the stream_id check in the tts_chunk handler.
+    ttsActiveStreamId = streamId;
+    // Reset the playback head so the new utterance starts immediately
+    // rather than queueing behind a previous (now-stale) stream that
+    // had advanced ttsNextStartTime into the future.
+    ttsNextStartTime = ttsAudioCtx.currentTime;
+  } catch (e) {
+    appendLog('error', 'TTS: ' + String(e));
+  }
+}
+
+listen('tts_chunk', async (msg) => {
+  const payload = msg.payload;
+  if (!payload || payload.stream_id !== ttsActiveStreamId) return;
+  if (!ttsAudioCtx || ttsAudioCtx.state !== 'running') return;
+  try {
+    // base64 → ArrayBuffer. atob + Uint8Array.from is the most
+    // compatible route; the browser-native atob handles big strings
+    // (~50KB / WAV chunk) just fine.
+    const bin = atob(payload.wav_base64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    // decodeAudioData mutates / detaches the buffer, so clone if you
+    // need it after this call. We don't.
+    const audioBuffer = await ttsAudioCtx.decodeAudioData(bytes.buffer);
+    const source = ttsAudioCtx.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(ttsAudioCtx.destination);
+    const startAt = Math.max(ttsNextStartTime, ttsAudioCtx.currentTime + 0.01);
+    source.start(startAt);
+    ttsNextStartTime = startAt + audioBuffer.duration;
+  } catch (e) {
+    console.error('tts chunk decode/play failed', e);
+  }
+});
+
+listen('tts_error', (msg) => {
+  if (msg.payload?.stream_id !== ttsActiveStreamId) return;
+  appendLog('error', `TTS: ${msg.payload?.message ?? 'unknown error'}`);
+});
+
+listen('tts_done', (msg) => {
+  if (msg.payload?.stream_id !== ttsActiveStreamId) return;
+  // No-op for now. Future: emit a 'finished talking' UI state.
+});
+
 approvalApprove.addEventListener('click', () => respondApproval(true));
 approvalDeny.addEventListener('click', () => respondApproval(false));
 
@@ -411,6 +506,7 @@ listen('agent_event', (msg) => {
     }
     case 'final':
       appendLog('final', `══ final ══\n${ev.answer}`);
+      speakIris(ev.answer);
       break;
     case 'malformed':
       appendLog('malformed', `[malformed] ${ev.excerpt}`);
