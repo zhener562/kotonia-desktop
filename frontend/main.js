@@ -38,6 +38,8 @@ const previewPath = document.getElementById('preview-path');
 const previewRefresh = document.getElementById('preview-refresh');
 const previewOpenExternal = document.getElementById('preview-open-external');
 const previewClose = document.getElementById('preview-close');
+const previewError = document.getElementById('preview-error');
+const previewErrorMsg = document.getElementById('preview-error-msg');
 
 let sessionId = null;
 let pendingApprovalId = null;
@@ -292,17 +294,39 @@ logEl.addEventListener('click', async (e) => {
 
 let currentPreviewPath = null;
 
-function openPreview(path) {
-  currentPreviewPath = path;
-  // Cache-bust suffix so re-opening the same path after a regen reloads
-  // the file from disk instead of showing the WebView's cached copy.
-  const url = convertFileSrc(path) + '#t=' + Date.now();
-  previewIframe.src = url;
-  previewPath.textContent = path;
-  previewPath.title = path;
+async function openPreview(path) {
   previewPane.classList.remove('hidden');
   btnTogglePreview.hidden = false;
   btnTogglePreview.textContent = '◀ プレビュー';
+  previewPath.textContent = path;
+  previewPath.title = path;
+
+  // Resolve through the Rust side so that:
+  //   - `./foo.html` is anchored to the workspace cwd
+  //   - missing file / scope-violation comes back as a clear error
+  //   - silent asset:// 404s in the iframe are replaced with a real
+  //     human-readable error overlay
+  let resolved;
+  try {
+    resolved = await invoke('resolve_preview_path', { path });
+  } catch (err) {
+    currentPreviewPath = path;
+    previewIframe.src = 'about:blank';
+    previewIframe.classList.add('hidden');
+    previewError.classList.remove('hidden');
+    previewErrorMsg.textContent = String(err);
+    return;
+  }
+
+  currentPreviewPath = resolved;
+  previewPath.textContent = resolved;
+  previewPath.title = resolved;
+  previewError.classList.add('hidden');
+  previewIframe.classList.remove('hidden');
+  // Cache-bust suffix so re-opening the same path after a regen reloads
+  // the file from disk instead of showing the WebView's cached copy.
+  const url = convertFileSrc(resolved) + '#t=' + Date.now();
+  previewIframe.src = url;
 }
 
 function closePreview() {

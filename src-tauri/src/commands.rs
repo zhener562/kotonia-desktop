@@ -172,6 +172,84 @@ fn expand_tilde(path: &str) -> String {
     path.to_string()
 }
 
+/// Resolve a path the way the iframe preview needs it: absolute,
+/// canonical, existence-checked, and inside the asset-protocol scope.
+///
+/// Accepts:
+///   - absolute `/foo/bar.html`
+///   - tilde   `~/foo/bar.html`
+///   - relative `./foo.html` / `../foo.html` / bare `foo.html`
+///     → resolved against the agent's workspace (`~/.kotonia/desktop/workspace`),
+///       since that's the agent's `in_place` cwd.
+///
+/// Fails (returns a user-facing Japanese error) if the resulting path
+/// doesn't exist, isn't a file, or isn't under the scope whitelist
+/// configured in `tauri.conf.json:assetProtocol.scope`.
+#[tauri::command]
+pub async fn resolve_preview_path(path: String) -> Result<String, String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("空のパスです".into());
+    }
+
+    // 1. Expand tilde and resolve relative paths against the workspace.
+    let raw = expand_tilde(trimmed);
+    let path_obj = std::path::Path::new(&raw);
+    let absolute = if path_obj.is_absolute() {
+        path_obj.to_path_buf()
+    } else {
+        let ws = default_workspace_root()?;
+        ws.join(path_obj)
+    };
+
+    // 2. Canonicalize (resolves `.`, `..`, symlinks). If the file is
+    //    missing, this fails with a clear OS error.
+    let canonical = std::fs::canonicalize(&absolute).map_err(|e| {
+        format!(
+            "ファイルが見つかりません: {} ({e})",
+            absolute.display()
+        )
+    })?;
+
+    // 3. Must be a regular file (no dir / device).
+    let meta = std::fs::metadata(&canonical).map_err(|e| e.to_string())?;
+    if !meta.is_file() {
+        return Err(format!(
+            "ファイルじゃない (dir or special): {}",
+            canonical.display()
+        ));
+    }
+
+    // 4. Must be inside one of the asset-protocol scope roots. Keep this
+    //    in sync with `tauri.conf.json:assetProtocol.scope`.
+    let allowed_roots: Vec<std::path::PathBuf> = {
+        let mut v = Vec::new();
+        if let Ok(ws) = default_workspace_root() {
+            if let Ok(c) = std::fs::canonicalize(&ws) {
+                v.push(c);
+            } else {
+                v.push(ws);
+            }
+        }
+        v.push(std::path::PathBuf::from("/tmp"));
+        v
+    };
+    let in_scope = allowed_roots.iter().any(|root| canonical.starts_with(root));
+    if !in_scope {
+        let roots = allowed_roots
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join(" / ");
+        return Err(format!(
+            "scope 外: {} (許可: {roots})",
+            canonical.display()
+        ));
+    }
+
+    Ok(canonical.to_string_lossy().to_string())
+}
+
 async fn get_or_create_session(
     state: &State<'_, AppState>,
     session_id: &str,

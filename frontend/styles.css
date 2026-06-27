@@ -160,6 +160,12 @@ body {
   background: var(--bg);
 }
 
+.preview-body {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+
 .preview-iframe {
   flex: 1 1 auto;
   width: 100%;
@@ -168,6 +174,55 @@ body {
      dark-theme bleed-through doesn't make the iframe look broken before
      the page's own CSS kicks in. */
   background: #ffffff;
+}
+
+.preview-iframe.hidden,
+.preview-error.hidden {
+  display: none;
+}
+
+.preview-error {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 24px;
+  gap: 12px;
+  color: var(--fg);
+  background: var(--bg-elev);
+  overflow-y: auto;
+}
+
+.preview-error-title {
+  margin: 0;
+  color: var(--err);
+  font-size: 15px;
+}
+
+.preview-error-msg {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--err);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.preview-error-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--fg-dim);
+  line-height: 1.6;
+}
+
+.preview-error-hint code {
+  background: var(--bg-elev-2);
+  padding: 1px 5px;
+  border-radius: 3px;
 }
 
 /* Inline ▶ button rendered next to .html / .htm paths in log lines. */

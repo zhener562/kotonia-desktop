@@ -29,13 +29,23 @@
         <button id="preview-open-external" type="button" title="OS 既定アプリで開く" class="preview-btn-sm">↗</button>
         <button id="preview-close" type="button" title="プレビューを閉じる" class="preview-btn-sm">×</button>
       </div>
-      <iframe
-        id="preview-iframe"
-        class="preview-iframe"
-        sandbox="allow-scripts allow-same-origin allow-pointer-lock allow-popups-to-escape-sandbox"
-        referrerpolicy="no-referrer"
-        title="preview"
-      ></iframe>
+      <div class="preview-body">
+        <iframe
+          id="preview-iframe"
+          class="preview-iframe"
+          sandbox="allow-scripts allow-same-origin allow-pointer-lock allow-popups-to-escape-sandbox"
+          referrerpolicy="no-referrer"
+          title="preview"
+        ></iframe>
+        <div id="preview-error" class="preview-error hidden">
+          <h3 class="preview-error-title">プレビューできません</h3>
+          <pre id="preview-error-msg" class="preview-error-msg"></pre>
+          <p class="preview-error-hint">
+            agent が出力した path が実在しない / scope 外 / dir を指してる、のどれかが原因です。<br>
+            agent に「<code>ls -la</code> で実体を確認して、絶対パスでもう一度教えて」と頼んでみてください。
+          </p>
+        </div>
+      </div>
     </aside>
   </div>
 

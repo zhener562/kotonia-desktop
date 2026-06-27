@@ -37,6 +37,7 @@ fn main() {
             commands::new_session,
             commands::open_login_help,
             commands::open_path,
+            commands::resolve_preview_path,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
