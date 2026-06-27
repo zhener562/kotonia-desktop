@@ -93,6 +93,11 @@ pub async fn run_stream(
             "language": voice.language,
             "speaker": voice.speaker,
             "speed": voice.speed,
+            // Critical for first-byte latency: the python tts_server
+            // defaults this to true, which bundles JA+EN mixed input
+            // into a single chunk emitted only after full generation.
+            // See VoiceConfig::split_mixed_languages for the trade-off.
+            "split_mixed_languages": voice.split_mixed_languages,
         }),
         "voicevox" => {
             // VoiceVox uses numeric speaker ids; the persona constant

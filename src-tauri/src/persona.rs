@@ -28,6 +28,15 @@ pub struct VoiceConfig {
     pub speaker: &'static str,
     pub language: &'static str,
     pub speed: f32,
+    /// Qwen3-TTS specific. Server-side default is `true` and silently
+    /// disables streaming for any JA+EN mixed input (it bundles all
+    /// runs and `yield`s one chunk at the end → first-byte equals
+    /// total generation time, which is the dominant perceived-latency
+    /// killer for technical-assistant personas whose every response
+    /// mixes English code/command tokens into Japanese prose). Set
+    /// `false` to keep the streaming path and accept that embedded
+    /// English may be mispronounced in the JA voice.
+    pub split_mixed_languages: bool,
 }
 
 pub const IRIS: Persona = Persona {
@@ -46,6 +55,11 @@ pub const IRIS: Persona = Persona {
         speaker: "Ono_Anna",
         language: "ja",
         speed: 1.0,
+        // Iris's answers will almost always mix English code / command
+        // tokens into Japanese prose. Keep the streaming path on so the
+        // first audio chunk lands as soon as the first sentence is ready
+        // — pronunciation of embedded English may suffer slightly.
+        split_mixed_languages: false,
     },
 };
 
