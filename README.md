@@ -24,6 +24,16 @@ hosted backend.
   scan して clickable span にする。`/`, `~/`, `./`, `../` で始まるトークン
   を拾う。`https://...` 等の URL は弾く (lookbehind)。plain click は
   選択コピー用に no-op。
+- **`.html` / `.htm` パスの隣に `▶ play` ボタン**: クリックで右ペインに
+  iframe を出してその場で開ける。Tauri 2 の asset protocol 経由 (
+  `tauri.conf.json:app.security.assetProtocol` に scope 設定済み:
+  `~/.kotonia/desktop/workspace/**` + `/tmp/**`)。
+  iframe は `sandbox="allow-scripts allow-same-origin allow-pointer-lock"`
+  なので JS は動く + `localStorage` で hi-score 保存もできる + マウス
+  ロック (FPS 風) も使える。閉じると `about:blank` に飛ばすので BGM や
+  アニメーションの CPU が残らない。再生中の HTML は ↻ で再読み込み、
+  ↗ で OS の既定アプリへ、× で閉じる。トップバーの `▶ プレビュー` トグル
+  で同じ HTML を再表示できる (初めて HTML を見たあとに出現)。
 
 Not yet shipped: workspace directory picker, model selector,
 `/chat/personas` style character UI, voice / Ditto, kotonia.ai webview

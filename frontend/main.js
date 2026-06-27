@@ -15,7 +15,7 @@
 //   "agent_event"      payload: { task_id, event: WireEvent }
 //   "approval_request" payload: { approval_id, task_id, command, reason }
 
-const { invoke } = window.__TAURI__.core;
+const { invoke, convertFileSrc } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
 const logEl = document.getElementById('log');
@@ -26,11 +26,18 @@ const authStatusEl = document.getElementById('auth-status');
 const sessionLabelEl = document.getElementById('session-label');
 const btnNewSession = document.getElementById('btn-new-session');
 const btnClearLog = document.getElementById('btn-clear-log');
+const btnTogglePreview = document.getElementById('btn-toggle-preview');
 const approvalModal = document.getElementById('approval-modal');
 const approvalReason = document.getElementById('approval-reason');
 const approvalCommand = document.getElementById('approval-command');
 const approvalApprove = document.getElementById('approval-approve');
 const approvalDeny = document.getElementById('approval-deny');
+const previewPane = document.getElementById('preview-pane');
+const previewIframe = document.getElementById('preview-iframe');
+const previewPath = document.getElementById('preview-path');
+const previewRefresh = document.getElementById('preview-refresh');
+const previewOpenExternal = document.getElementById('preview-open-external');
+const previewClose = document.getElementById('preview-close');
 
 let sessionId = null;
 let pendingApprovalId = null;
@@ -79,11 +86,16 @@ function linkifyPaths(text) {
 
     // Single-char results like a bare `/` aren't useful to linkify.
     if (core.length >= 2) {
-      parts.push(
+      const isPlayable = /\.html?$/i.test(core);
+      const link =
         `<a href="#" class="path-link" data-path="${escapeAttr(core)}"` +
         ` title="Ctrl+クリック (macOS は Cmd) で OS の既定アプリで開く">` +
-        `${escapeHtml(core)}</a>${escapeHtml(tail)}`
-      );
+        `${escapeHtml(core)}</a>`;
+      const playBtn = isPlayable
+        ? `<button class="preview-link-btn" data-preview-path="${escapeAttr(core)}"` +
+          ` title="右ペインのプレビューで開く (HTML)">▶ play</button>`
+        : '';
+      parts.push(link + playBtn + escapeHtml(tail));
     } else {
       parts.push(escapeHtml(m[0]));
     }
@@ -248,7 +260,16 @@ approvalDeny.addEventListener('click', () => respondApproval(false));
 // Ctrl/Cmd+click on a detected path link opens it with the OS default app
 // via the `open_path` Tauri command. Plain click is intentionally a no-op
 // so users can still drag-select the path text for copy.
+// ▶ play buttons next to .html / .htm paths load that file into the
+// preview pane via the asset:// protocol (configured in tauri.conf.json).
 logEl.addEventListener('click', async (e) => {
+  const playBtn = e.target.closest && e.target.closest('.preview-link-btn');
+  if (playBtn) {
+    e.preventDefault();
+    const path = playBtn.dataset.previewPath;
+    if (path) openPreview(path);
+    return;
+  }
   const link = e.target.closest && e.target.closest('.path-link');
   if (!link) return;
   e.preventDefault();
@@ -262,6 +283,60 @@ logEl.addEventListener('click', async (e) => {
     appendLog('error', `open failed: ${String(err)}`);
   }
 });
+
+// ── Preview pane ─────────────────────────────────────────────────────
+// State: the currently displayed path (for refresh / open-external),
+// and whether the user has interacted with the pane at all (so the
+// top-bar toggle button only appears once an HTML has been previewed,
+// keeping the UI minimal for non-game sessions).
+
+let currentPreviewPath = null;
+
+function openPreview(path) {
+  currentPreviewPath = path;
+  // Cache-bust suffix so re-opening the same path after a regen reloads
+  // the file from disk instead of showing the WebView's cached copy.
+  const url = convertFileSrc(path) + '#t=' + Date.now();
+  previewIframe.src = url;
+  previewPath.textContent = path;
+  previewPath.title = path;
+  previewPane.classList.remove('hidden');
+  btnTogglePreview.hidden = false;
+  btnTogglePreview.textContent = '◀ プレビュー';
+}
+
+function closePreview() {
+  previewPane.classList.add('hidden');
+  // Drop the iframe src so a game with audio / animation stops eating
+  // CPU while the pane is hidden. The path stays in `currentPreviewPath`
+  // so the top-bar toggle can reopen the same content.
+  previewIframe.src = 'about:blank';
+  btnTogglePreview.textContent = '▶ プレビュー';
+}
+
+function togglePreview() {
+  if (previewPane.classList.contains('hidden')) {
+    if (currentPreviewPath) openPreview(currentPreviewPath);
+  } else {
+    closePreview();
+  }
+}
+
+previewRefresh.addEventListener('click', () => {
+  if (currentPreviewPath) openPreview(currentPreviewPath);
+});
+
+previewOpenExternal.addEventListener('click', async () => {
+  if (!currentPreviewPath) return;
+  try {
+    await invoke('open_path', { path: currentPreviewPath });
+  } catch (err) {
+    appendLog('error', `open failed: ${String(err)}`);
+  }
+});
+
+previewClose.addEventListener('click', closePreview);
+btnTogglePreview.addEventListener('click', togglePreview);
 
 // Render incoming agent events.
 listen('agent_event', (msg) => {

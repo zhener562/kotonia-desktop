@@ -19,7 +19,14 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$HOME/.kotonia/desktop/workspace/**",
+          "/tmp/**"
+        ]
+      }
     },
     "withGlobalTauri": true
   },

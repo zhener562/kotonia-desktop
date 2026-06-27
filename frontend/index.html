@@ -16,10 +16,28 @@
     <div class="top-actions">
       <button id="btn-new-session" type="button" title="新しいセッション">新規</button>
       <button id="btn-clear-log" type="button" title="ログをクリア">クリア</button>
+      <button id="btn-toggle-preview" type="button" title="プレビューペイン表示切替" hidden>▶ プレビュー</button>
     </div>
   </header>
 
-  <main class="log-pane" id="log" aria-live="polite"></main>
+  <div id="app-shell" class="app-shell">
+    <main class="log-pane" id="log" aria-live="polite"></main>
+    <aside id="preview-pane" class="preview-pane hidden">
+      <div class="preview-header">
+        <span id="preview-path" class="preview-path" title=""></span>
+        <button id="preview-refresh" type="button" title="再読み込み" class="preview-btn-sm">↻</button>
+        <button id="preview-open-external" type="button" title="OS 既定アプリで開く" class="preview-btn-sm">↗</button>
+        <button id="preview-close" type="button" title="プレビューを閉じる" class="preview-btn-sm">×</button>
+      </div>
+      <iframe
+        id="preview-iframe"
+        class="preview-iframe"
+        sandbox="allow-scripts allow-same-origin allow-pointer-lock allow-popups-to-escape-sandbox"
+        referrerpolicy="no-referrer"
+        title="preview"
+      ></iframe>
+    </aside>
+  </div>
 
   <footer class="prompt-bar">
     <form id="prompt-form" autocomplete="off">

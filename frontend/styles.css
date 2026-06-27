@@ -94,12 +94,101 @@ body {
   border-color: var(--accent);
 }
 
+.app-shell {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+  min-height: 0;
+}
+
 .log-pane {
   flex: 1 1 auto;
   overflow-y: auto;
   padding: 12px 14px;
   font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
   font-size: 13px;
+  min-width: 0;
+}
+
+.preview-pane {
+  flex: 0 0 45%;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: var(--bg-elev);
+  min-width: 0;
+}
+
+.preview-pane.hidden {
+  display: none;
+}
+
+.preview-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  font-size: 12px;
+}
+
+.preview-path {
+  flex: 1 1 auto;
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+.preview-btn-sm {
+  background: transparent;
+  color: var(--fg-dim);
+  border: 1px solid transparent;
+  padding: 2px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.preview-btn-sm:hover {
+  border-color: var(--border);
+  color: var(--fg);
+  background: var(--bg);
+}
+
+.preview-iframe {
+  flex: 1 1 auto;
+  width: 100%;
+  border: none;
+  /* most agent-generated games assume a light page; default to white so
+     dark-theme bleed-through doesn't make the iframe look broken before
+     the page's own CSS kicks in. */
+  background: #ffffff;
+}
+
+/* Inline ▶ button rendered next to .html / .htm paths in log lines. */
+.preview-link-btn {
+  display: inline-block;
+  margin-left: 4px;
+  background: rgba(154, 206, 106, 0.12);
+  color: var(--ok);
+  border: 1px solid rgba(154, 206, 106, 0.4);
+  padding: 0 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  line-height: 16px;
+  cursor: pointer;
+  vertical-align: baseline;
+  font-family: -apple-system, sans-serif;
+}
+
+.preview-link-btn:hover {
+  background: rgba(154, 206, 106, 0.24);
+  border-color: var(--ok);
 }
 
 .log-line {
