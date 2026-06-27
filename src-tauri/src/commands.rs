@@ -1,0 +1,229 @@
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use serde::Serialize;
+use tauri::{AppHandle, Emitter, State};
+use tokio::sync::Mutex as AsyncMutex;
+
+use kotonia_cli::agent::agent::{Agent, AgentConfig};
+use kotonia_cli::agent::approval::ApprovalMode;
+use kotonia_cli::agent::dispatch::DispatchAgent;
+use kotonia_cli::agent::history::{load_session_messages, HistoryStore};
+use kotonia_cli::agent::provider::Provider;
+use kotonia_cli::agent::worktree::AgentWorkspace;
+
+use crate::bridge::{TauriApprovalHandler, TauriEventSink};
+use crate::state::{AppState, SessionState};
+
+/// Default model alias. Resolves through kotonia-cli's provider registry to
+/// the hosted `/api/v1/chat/completions` endpoint, authenticating with the
+/// device_token from `~/.kotonia/daemon.json`.
+const DEFAULT_MODEL: &str = "kotonia-gemma4-26b";
+
+/// Sandbox workspace under the user's home. Created on first use. T1 will
+/// surface a directory picker so the operator can point the agent at a
+/// real project tree.
+fn default_workspace_root() -> Result<PathBuf, String> {
+    let home = std::env::var_os("HOME").ok_or_else(|| "HOME is not set".to_string())?;
+    let root = PathBuf::from(home).join(".kotonia").join("desktop").join("workspace");
+    std::fs::create_dir_all(&root).map_err(|e| format!("create {}: {e}", root.display()))?;
+    Ok(root)
+}
+
+#[derive(Serialize)]
+pub struct AuthStatus {
+    pub logged_in: bool,
+    pub server: Option<String>,
+    pub device_id_prefix: Option<String>,
+}
+
+#[tauri::command]
+pub async fn auth_status() -> AuthStatus {
+    let cfg = kotonia_cli::config::load();
+    AuthStatus {
+        logged_in: cfg.is_some(),
+        server: cfg.as_ref().map(|c| c.server.clone()),
+        device_id_prefix: cfg
+            .as_ref()
+            .map(|c| c.device_id.chars().take(8).collect::<String>()),
+    }
+}
+
+#[tauri::command]
+pub fn new_session() -> String {
+    format!(
+        "s_{}_{}",
+        chrono::Utc::now().timestamp_millis(),
+        &uuid::Uuid::new_v4().to_string()[..8]
+    )
+}
+
+#[derive(Serialize)]
+pub struct SubmitTaskResponse {
+    pub task_id: String,
+    pub session_id: String,
+}
+
+#[tauri::command]
+pub async fn submit_task(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    prompt: String,
+    session_id: String,
+    model: Option<String>,
+) -> Result<SubmitTaskResponse, String> {
+    if kotonia_cli::config::load().is_none() {
+        return Err(
+            "not logged in. Run `kotonia-cli login` in a terminal, then restart the app."
+                .to_string(),
+        );
+    }
+
+    let session = get_or_create_session(&state, &session_id, model.as_deref()).await?;
+    let task_id = uuid::Uuid::new_v4().to_string();
+
+    let pending = state.pending_approvals.clone();
+    let app_for_spawn = app.clone();
+    let task_id_for_spawn = task_id.clone();
+
+    tokio::spawn(async move {
+        let mut sink = TauriEventSink {
+            app: app_for_spawn.clone(),
+            task_id: task_id_for_spawn.clone(),
+        };
+        let mut approval = TauriApprovalHandler {
+            app: app_for_spawn.clone(),
+            task_id: task_id_for_spawn.clone(),
+            pending,
+        };
+
+        let mut guard = session.lock().await;
+        let result = guard.agent.run_turn(&prompt, &mut approval, &mut sink).await;
+
+        if let Err(e) = result {
+            let _ = app_for_spawn.emit(
+                "agent_event",
+                serde_json::json!({
+                    "task_id": task_id_for_spawn,
+                    "event": { "kind": "error", "message": e.to_string() },
+                }),
+            );
+        }
+    });
+
+    Ok(SubmitTaskResponse {
+        task_id,
+        session_id,
+    })
+}
+
+#[tauri::command]
+pub async fn respond_approval(
+    state: State<'_, AppState>,
+    approval_id: String,
+    approved: bool,
+) -> Result<(), String> {
+    let mut pending = state.pending_approvals.lock().unwrap();
+    if let Some(tx) = pending.remove(&approval_id) {
+        let _ = tx.send(approved);
+        Ok(())
+    } else {
+        Err(format!("no pending approval for id {approval_id}"))
+    }
+}
+
+#[tauri::command]
+pub async fn open_login_help(app: AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_url("https://kotonia.ai/agent/pair", None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
+/// Open a filesystem path with the OS default application. Used by the
+/// Ctrl/Cmd+click handler in the log pane: the agent's observation /
+/// final-answer / bash-command text is scanned for path-shaped tokens,
+/// rendered as clickable spans, and resolved through here on activation.
+///
+/// Rejects empty paths and paths the FS can't see. Anything else is handed
+/// to the opener plugin (xdg-open / open / start) — symlinks resolve there.
+#[tauri::command]
+pub async fn open_path(app: AppHandle, path: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("empty path".into());
+    }
+    let expanded = expand_tilde(trimmed);
+    if !std::path::Path::new(&expanded).exists() {
+        return Err(format!("path does not exist: {expanded}"));
+    }
+    app.opener()
+        .open_path(expanded, None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
+fn expand_tilde(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix("~/") {
+        if let Some(home) = std::env::var_os("HOME") {
+            return format!("{}/{}", home.to_string_lossy(), rest);
+        }
+    }
+    path.to_string()
+}
+
+async fn get_or_create_session(
+    state: &State<'_, AppState>,
+    session_id: &str,
+    model_override: Option<&str>,
+) -> Result<Arc<AsyncMutex<SessionState>>, String> {
+    {
+        let map = state.sessions.read().await;
+        if let Some(s) = map.get(session_id) {
+            return Ok(s.clone());
+        }
+    }
+
+    let model = model_override.unwrap_or(DEFAULT_MODEL);
+    let workspace_root = default_workspace_root()?;
+    let workspace = AgentWorkspace::in_place(workspace_root);
+
+    let provider = Provider::resolve(None, model)
+        .map_err(|e| format!("provider `{model}`: {e}"))?;
+    let mut agent_config = AgentConfig::new(ApprovalMode::Allowlist, /*in_place=*/ true);
+    agent_config.kotonia_api_base = None;
+    let mut agent = DispatchAgent::ReAct(Agent::new(&workspace.root, provider, agent_config));
+
+    match HistoryStore::open(session_id) {
+        Ok(mut store) => {
+            let prior = load_session_messages(session_id).unwrap_or_default();
+            let resuming = !prior.is_empty();
+            if !resuming {
+                let _ = store.write_header(
+                    agent.model_id(),
+                    agent.backend_label(),
+                    "allowlist",
+                    &workspace.root,
+                    true,
+                );
+            }
+            agent = agent.with_history(store);
+            if resuming {
+                agent.seed_messages(prior);
+            } else {
+                agent.log_initial_system();
+            }
+        }
+        Err(_) => {
+            // History persistence is best-effort. Run without it.
+        }
+    }
+
+    let session = Arc::new(AsyncMutex::new(SessionState { agent, workspace }));
+    let mut map = state.sessions.write().await;
+    if let Some(existing) = map.get(session_id) {
+        return Ok(existing.clone());
+    }
+    map.insert(session_id.to_string(), session.clone());
+    Ok(session)
+}

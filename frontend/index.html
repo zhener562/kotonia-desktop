@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>kotonia</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top-bar">
+    <div class="brand">
+      <span class="brand-mark">●</span>
+      <span class="brand-name">kotonia</span>
+    </div>
+    <div id="auth-status" class="auth-status checking">checking…</div>
+    <div class="top-actions">
+      <button id="btn-new-session" type="button" title="新しいセッション">新規</button>
+      <button id="btn-clear-log" type="button" title="ログをクリア">クリア</button>
+    </div>
+  </header>
+
+  <main class="log-pane" id="log" aria-live="polite"></main>
+
+  <footer class="prompt-bar">
+    <form id="prompt-form" autocomplete="off">
+      <textarea
+        id="prompt-input"
+        placeholder="自分の PC に頼んでみる (Enter で送信、Shift+Enter で改行)"
+        rows="2"
+        autofocus
+      ></textarea>
+      <button id="prompt-submit" type="submit">送信</button>
+    </form>
+    <div class="prompt-footer">
+      <span id="session-label">session: —</span>
+    </div>
+  </footer>
+
+  <div id="approval-modal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-body">
+      <h2>承認が必要です</h2>
+      <p class="approval-reason" id="approval-reason"></p>
+      <pre class="approval-command" id="approval-command"></pre>
+      <div class="modal-actions">
+        <button id="approval-deny" type="button" class="btn-deny">拒否</button>
+        <button id="approval-approve" type="button" class="btn-approve">承認</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="main.js"></script>
+</body>
+</html>
