@@ -335,11 +335,32 @@ const PATH_RE_FOR_SPEECH =
   /(?<![\p{L}\p{N}_:/.])(?:~\/|\.{1,2}\/|\/)[^\s'"`<>()\\[\]{}]+/gu;
 const TRAILING_PUNCT_FOR_SPEECH = /[.,:;)\]'"`]+$/;
 
+// URL detection. Run *before* the path filter so a URL's `/foo/bar`
+// tail doesn't get caught by the path regex first. The host (incl. port
+// — `localhost:8000` is meaningful) is kept; everything after the next
+// `/`, `?`, or `#` is dropped.
+const URL_RE_FOR_SPEECH = /\b(?:https?|wss?|ftp):\/\/[^\s'"`<>()\\[\]{}]+/giu;
+function extractSpeakableHost(url) {
+  const m = url.match(/^[a-z]+:\/\/([^/?#]+)/i);
+  return m ? m[1] : url;
+}
+
 function preprocessForSpeech(text) {
   // 1. Drop fenced code blocks entirely. Keep a brief mention so the
   //    user hears that *something* was emitted.
   let cleaned = text.replace(/```(\w+)?\n?[\s\S]*?```/g, (_, lang) => {
     return lang ? `(${lang} コードブロックは省略)` : '(コードブロックは省略)';
+  });
+
+  // 1.5. Collapse URLs to their host. Must run before the path filter
+  //      so the URL's `/foo/bar` tail isn't treated as a separate path.
+  //      `https://github.com/zhener562/kotonia` → `github.com`,
+  //      `http://localhost:8000/api/v1/...` → `localhost:8000`.
+  cleaned = cleaned.replace(URL_RE_FOR_SPEECH, (match) => {
+    const trail = match.match(TRAILING_PUNCT_FOR_SPEECH);
+    const core = trail ? match.slice(0, -trail[0].length) : match;
+    const tail = trail ? trail[0] : '';
+    return extractSpeakableHost(core) + tail;
   });
 
   // 2. Collapse absolute / home / relative path tokens to their basename.
