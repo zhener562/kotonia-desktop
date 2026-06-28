@@ -448,9 +448,13 @@ body {
   background: var(--bg-elev);
   border: 1px solid var(--border);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
-  transition: transform 180ms ease, opacity 180ms ease;
+  /* Transitioning width/height would jank the resize drag, so keep the
+     transition list narrow. */
+  transition: opacity 180ms ease;
   user-select: none;
   -webkit-user-select: none;
+  /* Drag-anywhere cursor on the body; resize handle overrides locally. */
+  cursor: move;
 }
 
 .avatar-floating.hidden {
@@ -493,6 +497,34 @@ body {
 @keyframes avatar-blink {
   0%, 100% { opacity: 0.4; }
   50%      { opacity: 1; }
+}
+
+.avatar-resize-handle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 22px;
+  height: 22px;
+  cursor: nwse-resize;
+  /* Diagonal stripes pointing into the corner so it's discoverable as a
+     resize affordance without needing an icon font. */
+  background:
+    linear-gradient(
+      135deg,
+      transparent 0%,
+      transparent 45%,
+      rgba(255, 255, 255, 0.55) 45%,
+      rgba(255, 255, 255, 0.55) 55%,
+      transparent 55%,
+      transparent 70%,
+      rgba(255, 255, 255, 0.55) 70%,
+      rgba(255, 255, 255, 0.55) 80%,
+      transparent 80%
+    );
+  border-bottom-right-radius: 12px;
+  z-index: 2;
+  /* Avoid the drag-anywhere logic above by not inheriting "move". */
+  cursor: nwse-resize;
 }
 
 .modal {

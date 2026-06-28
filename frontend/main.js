@@ -31,6 +31,7 @@ const btnToggleAvatar = document.getElementById('btn-toggle-avatar');
 const btnMic = document.getElementById('btn-mic');
 const avatarFloating = document.getElementById('avatar-floating');
 const avatarFrame = document.getElementById('avatar-frame');
+const avatarResizeHandle = document.getElementById('avatar-resize-handle');
 const btnMicIcon = document.getElementById('btn-mic-icon');
 const btnMicLabel = document.getElementById('btn-mic-label');
 const btnTogglePreview = document.getElementById('btn-toggle-preview');
@@ -369,6 +370,174 @@ function setAvatarFrameSrc(src, isBlob) {
 }
 
 btnToggleAvatar.addEventListener('click', () => setAvatarEnabled(!avatarEnabled));
+
+// ── Draggable + resizable avatar (aspect-ratio locked) ───────────────
+// Stored under `kotonia_avatar_layout` in localStorage so the next
+// launch picks up where the user left off. Aspect ratio is pinned to
+// the iris.png portrait shape (2:3), so resize only takes a width
+// and computes height from it.
+
+const AVATAR_LAYOUT_KEY = 'kotonia_avatar_layout';
+const AVATAR_ASPECT = 2 / 3;   // width / height
+const AVATAR_MIN_W = 120;
+const AVATAR_MAX_W = 720;
+const AVATAR_VIEWPORT_MARGIN = 8;
+
+function clampAvatarLayout(layout) {
+  const width = Math.max(
+    AVATAR_MIN_W,
+    Math.min(
+      AVATAR_MAX_W,
+      Math.min(layout.width, window.innerWidth - AVATAR_VIEWPORT_MARGIN * 2)
+    )
+  );
+  const height = Math.round(width / AVATAR_ASPECT);
+  const maxX = Math.max(0, window.innerWidth - width - AVATAR_VIEWPORT_MARGIN);
+  const maxY = Math.max(0, window.innerHeight - height - AVATAR_VIEWPORT_MARGIN);
+  return {
+    x: Math.max(AVATAR_VIEWPORT_MARGIN, Math.min(maxX, layout.x)),
+    y: Math.max(AVATAR_VIEWPORT_MARGIN, Math.min(maxY, layout.y)),
+    width,
+    height,
+  };
+}
+
+function applyAvatarLayout(layout) {
+  // Switch from the CSS default (right/bottom anchoring) to explicit
+  // left/top so drag offsets compose cleanly.
+  avatarFloating.style.left = layout.x + 'px';
+  avatarFloating.style.top = layout.y + 'px';
+  avatarFloating.style.right = 'auto';
+  avatarFloating.style.bottom = 'auto';
+  avatarFloating.style.width = layout.width + 'px';
+  avatarFloating.style.height = layout.height + 'px';
+}
+
+function saveAvatarLayout(layout) {
+  try {
+    localStorage.setItem(
+      AVATAR_LAYOUT_KEY,
+      JSON.stringify({ x: layout.x, y: layout.y, width: layout.width }),
+    );
+  } catch {}
+}
+
+function loadAvatarLayout() {
+  try {
+    const raw = localStorage.getItem(AVATAR_LAYOUT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (
+      typeof parsed.x !== 'number' ||
+      typeof parsed.y !== 'number' ||
+      typeof parsed.width !== 'number'
+    ) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function restoreAvatarLayout() {
+  const saved = loadAvatarLayout();
+  if (!saved) return; // CSS default (right:20 bottom:110) stays in effect
+  applyAvatarLayout(clampAvatarLayout({ ...saved, height: saved.width / AVATAR_ASPECT }));
+}
+
+restoreAvatarLayout();
+window.addEventListener('resize', () => {
+  // Re-clamp on viewport changes so the avatar doesn't end up off-screen.
+  const layout = loadAvatarLayout();
+  if (layout) applyAvatarLayout(clampAvatarLayout({ ...layout, height: layout.width / AVATAR_ASPECT }));
+});
+
+// Drag-anywhere-on-the-portrait to reposition. Resize handle has its
+// own pointer logic and stops propagation so the two gestures don't
+// collide.
+let dragState = null;
+avatarFloating.addEventListener('pointerdown', (e) => {
+  if (e.target === avatarResizeHandle) return; // resize handler takes over
+  if (e.button !== 0) return; // primary mouse button only
+  dragState = {
+    pointerId: e.pointerId,
+    startClientX: e.clientX,
+    startClientY: e.clientY,
+    origX: avatarFloating.offsetLeft,
+    origY: avatarFloating.offsetTop,
+    width: avatarFloating.offsetWidth,
+    height: avatarFloating.offsetHeight,
+  };
+  avatarFloating.setPointerCapture(e.pointerId);
+  e.preventDefault();
+});
+
+avatarFloating.addEventListener('pointermove', (e) => {
+  if (!dragState || e.pointerId !== dragState.pointerId) return;
+  const dx = e.clientX - dragState.startClientX;
+  const dy = e.clientY - dragState.startClientY;
+  applyAvatarLayout(
+    clampAvatarLayout({
+      x: dragState.origX + dx,
+      y: dragState.origY + dy,
+      width: dragState.width,
+      height: dragState.height,
+    }),
+  );
+});
+
+avatarFloating.addEventListener('pointerup', (e) => {
+  if (!dragState || e.pointerId !== dragState.pointerId) return;
+  saveAvatarLayout({
+    x: avatarFloating.offsetLeft,
+    y: avatarFloating.offsetTop,
+    width: avatarFloating.offsetWidth,
+  });
+  try { avatarFloating.releasePointerCapture(e.pointerId); } catch {}
+  dragState = null;
+});
+
+// Resize handle: drag the bottom-right corner. Width follows mouse, height
+// derived from AVATAR_ASPECT — there's no separate vertical drag.
+let resizeState = null;
+avatarResizeHandle.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  e.stopPropagation(); // prevent drag-state from also firing
+  resizeState = {
+    pointerId: e.pointerId,
+    startClientX: e.clientX,
+    origWidth: avatarFloating.offsetWidth,
+    origX: avatarFloating.offsetLeft,
+    origY: avatarFloating.offsetTop,
+  };
+  avatarResizeHandle.setPointerCapture(e.pointerId);
+  e.preventDefault();
+});
+
+avatarResizeHandle.addEventListener('pointermove', (e) => {
+  if (!resizeState || e.pointerId !== resizeState.pointerId) return;
+  const dx = e.clientX - resizeState.startClientX;
+  applyAvatarLayout(
+    clampAvatarLayout({
+      x: resizeState.origX,
+      y: resizeState.origY,
+      width: resizeState.origWidth + dx,
+      height: (resizeState.origWidth + dx) / AVATAR_ASPECT,
+    }),
+  );
+});
+
+avatarResizeHandle.addEventListener('pointerup', (e) => {
+  if (!resizeState || e.pointerId !== resizeState.pointerId) return;
+  saveAvatarLayout({
+    x: avatarFloating.offsetLeft,
+    y: avatarFloating.offsetTop,
+    width: avatarFloating.offsetWidth,
+  });
+  try { avatarResizeHandle.releasePointerCapture(e.pointerId); } catch {}
+  resizeState = null;
+});
 
 // TTS-direction text cleanup. The displayed log keeps the full
 // original answer (with code blocks, paths, etc.) — these filters
