@@ -45,6 +45,36 @@ fn main() {
             commands::tts_speak,
             commands::stt_transcribe,
         ])
+        .setup(|app| {
+            #[cfg(target_os = "linux")]
+            allow_webkit_media_permissions(app);
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Hook the WebKitGTK `permission-request` signal on the main window
+/// and `.allow()` every request. Without this, `getUserMedia` (mic /
+/// camera) is silently denied on Linux and the WebView throws
+/// `NotAllowedError` to the page — there's no system "allow this app
+/// to use the microphone?" dialog, the request just dies. Real
+/// browsers handle this by popping a UI; for an in-app static-HTML
+/// shell like kotonia-desktop a blanket allow is the right default
+/// (every request originates from our own bundled frontend, no
+/// third-party origin can sneak in unwanted requests).
+#[cfg(target_os = "linux")]
+fn allow_webkit_media_permissions(app: &tauri::App) {
+    use tauri::Manager;
+    let Some(window) = app.get_webview_window("main") else {
+        eprintln!("kotonia-desktop: main window not found for permission setup");
+        return;
+    };
+    let _ = window.with_webview(|wv| {
+        use webkit2gtk::{PermissionRequestExt, WebViewExt};
+        wv.inner().connect_permission_request(|_view, request| {
+            request.allow();
+            true
+        });
+    });
 }
