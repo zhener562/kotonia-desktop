@@ -322,12 +322,42 @@ function setVoiceEnabled(enabled) {
 
 btnToggleVoice.addEventListener('click', () => setVoiceEnabled(!voiceEnabled));
 
+// TTS-direction text cleanup: even with the Iris persona prompt
+// forbidding long code blocks in answers, the model still slips
+// occasionally — and reading a 500-line HTML file out loud at 5
+// minutes/page is a UX disaster. Strip fenced code blocks before
+// they hit the synthesizer and hard-cap the spoken length.
+function preprocessForSpeech(text) {
+  // Drop ```lang ... ``` fenced blocks entirely. Keep a brief mention
+  // so the user hears that *something* was emitted.
+  let cleaned = text.replace(/```(\w+)?\n?[\s\S]*?```/g, (_, lang) => {
+    return lang ? `(${lang} コードブロックは省略)` : '(コードブロックは省略)';
+  });
+  // Inline `code` is short enough to read; leave it.
+  // Strip inline file-path tokens too aggressive? Keep them — Iris's
+  // "X に書きました" pattern benefits from speaking the path.
+  cleaned = cleaned.trim();
+  if (cleaned.length > 1000) {
+    // Hard cap. Trim at the last sentence-ish boundary so the spoken
+    // version doesn't end mid-word.
+    const head = cleaned.slice(0, 1000);
+    const lastStop = Math.max(
+      head.lastIndexOf('。'),
+      head.lastIndexOf('. '),
+      head.lastIndexOf('\n'),
+    );
+    cleaned = (lastStop > 200 ? head.slice(0, lastStop + 1) : head) +
+      ' (続きは画面で)';
+  }
+  return cleaned;
+}
+
 async function speakIris(text) {
   if (!voiceEnabled || !ttsAudioCtx) return;
-  const trimmed = (text || '').trim();
-  if (!trimmed) return;
+  const speakable = preprocessForSpeech(text || '');
+  if (!speakable) return;
   try {
-    const streamId = await invoke('tts_speak', { text: trimmed });
+    const streamId = await invoke('tts_speak', { text: speakable });
     // The latest call wins — older streams' chunks will be filtered
     // out by the stream_id check in the tts_chunk handler.
     ttsActiveStreamId = streamId;
