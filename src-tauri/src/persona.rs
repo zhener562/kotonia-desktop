@@ -67,18 +67,14 @@ pub const IRIS: Persona = Persona {
         speaker: "Ono_Anna",
         language: "ja",
         speed: 1.0,
-        // Iris's answers will almost always mix English code / command
-        // tokens into Japanese prose. Keep the streaming path on so the
-        // first audio chunk lands as soon as the first sentence is ready
-        // — pronunciation of embedded English may suffer slightly.
-        //
-        // TEMPORARY: when issue #139 (python tts_server `generate_mixed`
-        // per-run yield) lands, flip this back to `true` so Iris gets
-        // both native-fluent English pronunciation AND streaming
-        // first-byte latency. The "fluent English" UX was actively
-        // preferred during dogfooding; we only turned it off because
-        // it was bundling the whole utterance into one chunk.
-        split_mixed_languages: false,
+        // Native English pronunciation for embedded EN tokens
+        // (`shell`, `ls -la`, `main.rs`) AND streaming first-byte
+        // latency, both. Used to be `false` (workaround for the
+        // python tts_server's mixed-mode bundling) but that's fixed
+        // upstream now — `generate_mixed` yields each upstream WAV
+        // chunk through as it lands instead of accumulating PCM and
+        // emitting one chunk at the end. Closes kotonia issue #139.
+        split_mixed_languages: true,
     },
 };
 
