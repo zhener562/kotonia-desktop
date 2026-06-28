@@ -27,7 +27,10 @@ const sessionLabelEl = document.getElementById('session-label');
 const btnNewSession = document.getElementById('btn-new-session');
 const btnClearLog = document.getElementById('btn-clear-log');
 const btnToggleVoice = document.getElementById('btn-toggle-voice');
+const btnToggleAvatar = document.getElementById('btn-toggle-avatar');
 const btnMic = document.getElementById('btn-mic');
+const avatarFloating = document.getElementById('avatar-floating');
+const avatarFrame = document.getElementById('avatar-frame');
 const btnMicIcon = document.getElementById('btn-mic-icon');
 const btnMicLabel = document.getElementById('btn-mic-label');
 const btnTogglePreview = document.getElementById('btn-toggle-preview');
@@ -322,6 +325,51 @@ function setVoiceEnabled(enabled) {
 
 btnToggleVoice.addEventListener('click', () => setVoiceEnabled(!voiceEnabled));
 
+// ── Avatar (Ditto lip-sync) mode ─────────────────────────────────────
+// Enabling this routes the agent's spoken answer through
+// `/api/voice/ditto/tts/stream/avatar` instead of the plain TTS path,
+// so the floating Iris portrait animates in time with the audio. Voice
+// must also be ON for audio to actually play; we don't force-link the
+// two toggles (a user might want to see the avatar while muted, e.g.
+// for a screen capture).
+
+let avatarEnabled = false;
+const STATIC_AVATAR_SRC = 'persona/iris.png';
+let activeFrameUrl = null;
+let prevFrameUrl = null;
+
+function setAvatarEnabled(enabled) {
+  avatarEnabled = enabled;
+  btnToggleAvatar.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+  if (enabled) {
+    avatarFloating.classList.remove('hidden');
+    avatarFloating.setAttribute('aria-hidden', 'false');
+    // Reset to the bundled still image when re-shown so the user
+    // doesn't see the last (frozen) frame from a previous talk.
+    setAvatarFrameSrc(STATIC_AVATAR_SRC, /*isBlob*/ false);
+  } else {
+    avatarFloating.classList.add('hidden');
+    avatarFloating.classList.remove('speaking');
+    avatarFloating.setAttribute('aria-hidden', 'true');
+    setAvatarFrameSrc(STATIC_AVATAR_SRC, /*isBlob*/ false);
+  }
+}
+
+function setAvatarFrameSrc(src, isBlob) {
+  // Revoke the previous frame's object URL after the next paint so we
+  // don't pile up Blobs in memory at 25fps. We keep one URL behind the
+  // live one in case the <img> hasn't decoded yet when the new URL is
+  // assigned.
+  if (prevFrameUrl) {
+    URL.revokeObjectURL(prevFrameUrl);
+  }
+  prevFrameUrl = activeFrameUrl;
+  activeFrameUrl = isBlob ? src : null;
+  avatarFrame.src = src;
+}
+
+btnToggleAvatar.addEventListener('click', () => setAvatarEnabled(!avatarEnabled));
+
 // TTS-direction text cleanup. The displayed log keeps the full
 // original answer (with code blocks, paths, etc.) — these filters
 // only apply to what gets handed to the synthesizer, because reading
@@ -394,38 +442,27 @@ function preprocessForSpeech(text) {
   return cleaned;
 }
 
-async function speakIris(text) {
-  if (!voiceEnabled || !ttsAudioCtx) return;
-  const speakable = preprocessForSpeech(text || '');
-  if (!speakable) return;
-  try {
-    const streamId = await invoke('tts_speak', { text: speakable });
-    // The latest call wins — older streams' chunks will be filtered
-    // out by the stream_id check in the tts_chunk handler.
-    ttsActiveStreamId = streamId;
-    // Reset the playback head so the new utterance starts immediately
-    // rather than queueing behind a previous (now-stale) stream that
-    // had advanced ttsNextStartTime into the future.
-    ttsNextStartTime = ttsAudioCtx.currentTime;
-  } catch (e) {
-    appendLog('error', 'TTS: ' + String(e));
-  }
+// Ditto-mode sync state. When the active stream is from the
+// `/api/voice/ditto/tts/stream/avatar` endpoint, audio chunks have to
+// wait for the first JPEG frame to arrive before they start playing —
+// frame generation is slower than audio synthesis, so without the
+// hold-back the voice would lead the face by 200-400 ms and look
+// dubbed. The python ditto endpoint emits frames lazily but audio
+// chunks eagerly, so the JS side absorbs the gap.
+let activeStreamWantsDitto = false;
+let dittoAwaitingFirstFrame = false;
+let dittoAudioBuffer = [];
+
+function base64ToUint8Array(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
 }
 
-listen('tts_chunk', async (msg) => {
-  const payload = msg.payload;
-  if (!payload || payload.stream_id !== ttsActiveStreamId) return;
-  if (!ttsAudioCtx || ttsAudioCtx.state !== 'running') return;
+async function playAudioChunk(wavBytes) {
   try {
-    // base64 → ArrayBuffer. atob + Uint8Array.from is the most
-    // compatible route; the browser-native atob handles big strings
-    // (~50KB / WAV chunk) just fine.
-    const bin = atob(payload.wav_base64);
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    // decodeAudioData mutates / detaches the buffer, so clone if you
-    // need it after this call. We don't.
-    const audioBuffer = await ttsAudioCtx.decodeAudioData(bytes.buffer);
+    const audioBuffer = await ttsAudioCtx.decodeAudioData(wavBytes.buffer);
     const source = ttsAudioCtx.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(ttsAudioCtx.destination);
@@ -433,18 +470,102 @@ listen('tts_chunk', async (msg) => {
     source.start(startAt);
     ttsNextStartTime = startAt + audioBuffer.duration;
   } catch (e) {
-    console.error('tts chunk decode/play failed', e);
+    console.error('audio chunk play failed', e);
   }
+}
+
+async function speakIris(text) {
+  if (!voiceEnabled || !ttsAudioCtx) return;
+  const speakable = preprocessForSpeech(text || '');
+  if (!speakable) return;
+  // Reset per-stream sync state BEFORE invoke, so any in-flight chunk
+  // from a previous stream that beats us to the listener is correctly
+  // discarded by the stream_id check.
+  dittoAudioBuffer = [];
+  dittoAwaitingFirstFrame = avatarEnabled;
+  activeStreamWantsDitto = avatarEnabled;
+  try {
+    const command = avatarEnabled ? 'ditto_speak' : 'tts_speak';
+    const streamId = await invoke(command, { text: speakable });
+    ttsActiveStreamId = streamId;
+    // Reset the playback head so the new utterance starts immediately
+    // rather than queueing behind a previous (stale) stream that had
+    // advanced ttsNextStartTime into the future.
+    ttsNextStartTime = ttsAudioCtx.currentTime;
+  } catch (e) {
+    appendLog('error', 'TTS: ' + String(e));
+    activeStreamWantsDitto = false;
+    dittoAwaitingFirstFrame = false;
+  }
+}
+
+listen('tts_chunk', async (msg) => {
+  const payload = msg.payload;
+  if (!payload || payload.stream_id !== ttsActiveStreamId) return;
+  if (!ttsAudioCtx || ttsAudioCtx.state !== 'running') return;
+
+  const wavBytes = base64ToUint8Array(payload.wav_base64);
+
+  // Ditto path: hold audio until the first frame lands so face + voice
+  // start in lockstep. Pure-TTS path: schedule immediately.
+  if (activeStreamWantsDitto && dittoAwaitingFirstFrame) {
+    dittoAudioBuffer.push(wavBytes);
+    return;
+  }
+  await playAudioChunk(wavBytes);
+});
+
+listen('ditto_frame', async (msg) => {
+  const payload = msg.payload;
+  if (!payload || payload.stream_id !== ttsActiveStreamId) return;
+
+  // First frame: flush whatever audio chunks we've been holding so
+  // they start playing in the same tick the frame becomes visible.
+  if (dittoAwaitingFirstFrame) {
+    dittoAwaitingFirstFrame = false;
+    ttsNextStartTime = ttsAudioCtx ? ttsAudioCtx.currentTime : 0;
+    for (const wavBytes of dittoAudioBuffer.splice(0)) {
+      await playAudioChunk(wavBytes);
+    }
+  }
+
+  if (!avatarEnabled) return; // toggle flipped off mid-stream
+
+  const blob = new Blob([base64ToUint8Array(payload.jpeg_base64)], {
+    type: 'image/jpeg',
+  });
+  const url = URL.createObjectURL(blob);
+  setAvatarFrameSrc(url, /*isBlob*/ true);
+  avatarFloating.classList.add('speaking');
 });
 
 listen('tts_error', (msg) => {
   if (msg.payload?.stream_id !== ttsActiveStreamId) return;
   appendLog('error', `TTS: ${msg.payload?.message ?? 'unknown error'}`);
+  // Clean up sync state so the next stream isn't stuck waiting.
+  dittoAwaitingFirstFrame = false;
+  activeStreamWantsDitto = false;
+  dittoAudioBuffer = [];
 });
 
 listen('tts_done', (msg) => {
   if (msg.payload?.stream_id !== ttsActiveStreamId) return;
-  // No-op for now. Future: emit a 'finished talking' UI state.
+  if (activeStreamWantsDitto) {
+    const closingStreamId = msg.payload.stream_id;
+    // Hold the last frame for the tail of the audio (~500 ms) so the
+    // mouth doesn't snap shut a beat too early, then revert to the
+    // bundled still image. Skip the revert if a new stream has started
+    // in the meantime.
+    setTimeout(() => {
+      if (ttsActiveStreamId !== closingStreamId) return;
+      avatarFloating.classList.remove('speaking');
+      setAvatarFrameSrc(STATIC_AVATAR_SRC, /*isBlob*/ false);
+    }, 500);
+  }
+});
+
+listen('ditto_register_error', (msg) => {
+  appendLog('error', `avatar 登録失敗: ${msg.payload?.message ?? 'unknown'} — face モードは使えませんが他は動きます`);
 });
 
 // ── Mic capture → STT → prompt textarea (dictation mode) ─────────────

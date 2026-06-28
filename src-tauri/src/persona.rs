@@ -16,6 +16,16 @@ pub struct Persona {
     pub avatar_url: &'static str,
     pub system_prompt: &'static str,
     pub voice: VoiceConfig,
+    /// Ditto avatar id used by `/api/voice/ditto/tts/stream/avatar`.
+    /// On first launch the app POSTs the persona's still image to
+    /// `/api/voice/ditto/prepare` under this id; subsequent talk-mode
+    /// requests reference it. The id is operator-chosen (not server-
+    /// assigned), so we pin it to the persona key for predictability.
+    pub avatar_id: &'static str,
+    /// Persona avatar's bundled PNG bytes — embedded at compile time
+    /// via `include_bytes!` so the runtime doesn't need to find the
+    /// frontend dir to register the avatar. Same image the UI shows.
+    pub avatar_png: &'static [u8],
 }
 
 /// TTS request shape used by `/api/voice/qwen3/tts/stream`. Currently
@@ -44,6 +54,8 @@ pub const IRIS: Persona = Persona {
     display_name: "Iris",
     tagline: "android engineer · kotonia desktop",
     avatar_url: "persona/iris.png",
+    avatar_id: "iris",
+    avatar_png: include_bytes!("../../frontend/persona/iris.png"),
     system_prompt: IRIS_SYSTEM_PROMPT,
     voice: VoiceConfig {
         engine: "qwen3",

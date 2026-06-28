@@ -154,6 +154,35 @@ pub async fn stt_transcribe(wav_base64: String) -> Result<crate::stt::Transcribe
     crate::stt::transcribe(wav_base64).await
 }
 
+/// Speak `text` with Iris's voice **plus** Ditto lip-sync video.
+/// Same `stream_id` correlation as `tts_speak`; the frontend swaps
+/// the static avatar image for the JPEG frame stream as `ditto_frame`
+/// events arrive. Audio still flows through the `tts_chunk` event,
+/// but with the explicit warning that the JS side should *buffer*
+/// audio until the first `ditto_frame` lands so face + voice start
+/// together (frame generation is slower than audio synthesis).
+#[tauri::command]
+pub async fn ditto_speak(app: AppHandle, text: String) -> Result<String, String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err("空文字は読めません".into());
+    }
+    let stream_id = uuid::Uuid::new_v4().to_string();
+    let text_owned = trimmed.to_string();
+    let stream_for_task = stream_id.clone();
+    let app_for_task = app.clone();
+    tokio::spawn(async move {
+        crate::ditto::run_stream(
+            app_for_task,
+            stream_for_task,
+            text_owned,
+            &crate::persona::IRIS,
+        )
+        .await;
+    });
+    Ok(stream_id)
+}
+
 /// Speak text in Iris's voice. Returns the `stream_id` immediately so
 /// the frontend can correlate the streamed `tts_chunk` / `tts_done` /
 /// `tts_error` events to this call (and ignore any in-flight events

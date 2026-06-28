@@ -2,6 +2,7 @@
 
 mod bridge;
 mod commands;
+mod ditto;
 mod persona;
 mod state;
 mod stt;
@@ -43,11 +44,39 @@ fn main() {
             commands::open_path,
             commands::resolve_preview_path,
             commands::tts_speak,
+            commands::ditto_speak,
             commands::stt_transcribe,
         ])
         .setup(|app| {
             #[cfg(target_os = "linux")]
             allow_webkit_media_permissions(app);
+            // One-shot Iris avatar registration with the Ditto server,
+            // backgrounded so it doesn't block app startup. Idempotent
+            // on the server (re-POST of an existing id is a no-op), so
+            // the worst case is a wasted request if the user hits a
+            // first-launch flow twice. Failures are logged but do not
+            // abort the app — the TTS-only path still works without a
+            // registered avatar.
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let persona = &persona::IRIS;
+                if ditto::is_avatar_registered(persona).await {
+                    eprintln!("[ditto] avatar `{}` already registered", persona.avatar_id);
+                    return;
+                }
+                eprintln!("[ditto] registering avatar `{}`...", persona.avatar_id);
+                match ditto::register_avatar(persona).await {
+                    Ok(()) => eprintln!("[ditto] avatar registered"),
+                    Err(e) => {
+                        eprintln!("[ditto] avatar registration failed: {e}");
+                        use tauri::Emitter;
+                        let _ = app_handle.emit(
+                            "ditto_register_error",
+                            serde_json::json!({ "message": e }),
+                        );
+                    }
+                }
+            });
             Ok(())
         })
         .run(tauri::generate_context!())

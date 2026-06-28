@@ -21,6 +21,7 @@
       <button id="btn-clear-log" type="button" title="ログをクリア">クリア</button>
       <button id="btn-mic" type="button" title="マイクで吹き込んで prompt 欄に転写 (Esc キャンセル)"><span id="btn-mic-icon">🎙️</span><span id="btn-mic-label">&nbsp;mic</span></button>
       <button id="btn-toggle-voice" type="button" title="Iris の声を ON/OFF" aria-pressed="false">🔇 voice</button>
+      <button id="btn-toggle-avatar" type="button" title="Iris の顔を表示してリップシンク (voice ON 前提)" aria-pressed="false">👤 face</button>
       <button id="btn-toggle-preview" type="button" title="プレビューペイン表示切替" hidden>▶ プレビュー</button>
     </div>
   </header>
@@ -68,6 +69,11 @@
       <span id="session-label">session: —</span>
     </div>
   </footer>
+
+  <div id="avatar-floating" class="avatar-floating hidden" aria-hidden="true">
+    <img id="avatar-frame" class="avatar-frame" alt="Iris" src="persona/iris.png" draggable="false">
+    <div id="avatar-indicator" class="avatar-indicator"></div>
+  </div>
 
   <div id="approval-modal" class="modal hidden" role="dialog" aria-modal="true">
     <div class="modal-body">
