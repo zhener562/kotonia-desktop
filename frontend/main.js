@@ -28,6 +28,8 @@ const btnNewSession = document.getElementById('btn-new-session');
 const btnClearLog = document.getElementById('btn-clear-log');
 const btnToggleVoice = document.getElementById('btn-toggle-voice');
 const btnMic = document.getElementById('btn-mic');
+const btnMicIcon = document.getElementById('btn-mic-icon');
+const btnMicLabel = document.getElementById('btn-mic-label');
 const btnTogglePreview = document.getElementById('btn-toggle-preview');
 const approvalModal = document.getElementById('approval-modal');
 const approvalReason = document.getElementById('approval-reason');
@@ -394,15 +396,18 @@ function setMicState(state) {
   micState = state;
   if (state === 'idle') {
     btnMic.removeAttribute('data-state');
-    btnMic.textContent = '🎙️ mic';
+    btnMicIcon.textContent = '🎙️';
+    btnMicLabel.textContent = ' mic';
     btnMic.disabled = false;
   } else if (state === 'recording') {
     btnMic.setAttribute('data-state', 'recording');
-    btnMic.textContent = '🔴 0.0s';
+    btnMicIcon.textContent = '🔴';
+    btnMicLabel.textContent = ' 0.0s';
     btnMic.disabled = false;
   } else if (state === 'transcribing') {
     btnMic.setAttribute('data-state', 'transcribing');
-    btnMic.textContent = '⏳ transcribing…';
+    btnMicIcon.textContent = '⏳';
+    btnMicLabel.textContent = ' …';
     btnMic.disabled = true;
   }
 }
@@ -410,7 +415,13 @@ function setMicState(state) {
 function tickElapsed() {
   if (micState !== 'recording') return;
   const sec = (Date.now() - micStartedAt) / 1000;
-  btnMic.textContent = `🔴 ${sec.toFixed(1)}s`;
+  // Update only the label span — never touch the button element itself.
+  // WebKitGTK appears to drop the occasional click on a button whose
+  // own textContent is being replaced on a 100ms tick (click hit-test
+  // race during DOM mutation). Isolating the high-frequency mutation
+  // into a child node resolves the "stop button only works on the
+  // Nth try" symptom we saw.
+  btnMicLabel.textContent = ` ${sec.toFixed(1)}s`;
 }
 
 async function startMic() {
@@ -524,10 +535,13 @@ function bytesToBase64(bytes) {
 
 async function stopMicAndTranscribe() {
   if (micState !== 'recording') return;
+  // Flip state BEFORE awaiting cleanup so a second click that lands
+  // during the (slow) `AudioContext.close()` await can't re-enter and
+  // double-trigger this whole pipeline.
   const chunks = micSamples;
   const rate = micSampleRate;
-  await cleanupMic();
   setMicState('transcribing');
+  await cleanupMic();
 
   try {
     const samples = concatSamples(chunks);
@@ -547,12 +561,16 @@ async function stopMicAndTranscribe() {
       setMicState('idle');
       return;
     }
-    // Replace (not append) so accidental leftover doesn't get mixed in.
-    promptInput.value = text;
+    // Append (not replace) so the user can stack multiple dictations
+    // into a single prompt — speak a bit, think, speak more, edit,
+    // then Enter. A space joins runs only when the existing value
+    // doesn't already end with whitespace/newline.
+    const existing = promptInput.value;
+    const needsSep = existing.length > 0 && !/[\s]$/.test(existing);
+    const newValue = existing + (needsSep ? ' ' : '') + text;
+    promptInput.value = newValue;
     promptInput.focus();
-    // Put the caret at the end so Enter sends immediately if the user
-    // is happy with the transcript.
-    promptInput.setSelectionRange(text.length, text.length);
+    promptInput.setSelectionRange(newValue.length, newValue.length);
     appendLog('info', `📝 ${text}  (${result?.elapsed_ms ?? '?'}ms)`);
   } catch (e) {
     appendLog('error', `STT 失敗: ${String(e?.message ?? e)}`);

@@ -123,7 +123,19 @@ body {
   background: var(--err);
   color: var(--bg);
   border-color: var(--err);
+  /* Animate via background-color/border, not opacity — opacity-based
+     pulse has occasionally been observed to interact badly with click
+     hit-testing on WebKitGTK. */
   animation: mic-pulse 1.2s ease-in-out infinite;
+}
+
+#btn-mic > span {
+  display: inline-block;
+  pointer-events: none; /* click bubbles to the button, not the spans */
+}
+
+#btn-mic-label {
+  font-variant-numeric: tabular-nums; /* don't reflow as 0.0 → 1.0 → 10.0 */
 }
 
 .top-actions button[data-state="transcribing"] {
