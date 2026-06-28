@@ -17,6 +17,14 @@
     </div>
     <div id="auth-status" class="auth-status checking">checking…</div>
     <div class="top-actions">
+      <button id="btn-workspace" type="button" class="workspace-btn" title="エージェントの作業ディレクトリを変更">
+        <span class="workspace-btn-label">workspace:</span>
+        <span id="workspace-path" class="workspace-btn-path">…</span>
+      </button>
+      <select id="engine-select" title="エージェントエンジンを切替 (変更時は自動で新セッション)">
+        <option value="react" selected>Iris (kotonia ReAct)</option>
+        <option value="claude-code">Claude Code (headless)</option>
+      </select>
       <button id="btn-new-session" type="button" title="新しいセッション">新規</button>
       <button id="btn-clear-log" type="button" title="ログをクリア">クリア</button>
       <button id="btn-mic" type="button" title="マイクで吹き込んで prompt 欄に転写 (Esc キャンセル)"><span id="btn-mic-icon">🎙️</span><span id="btn-mic-label">&nbsp;mic</span></button>

@@ -99,7 +99,8 @@ body {
   font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
 }
 
-.top-actions button {
+.top-actions button,
+.top-actions select {
   background: var(--bg-elev-2);
   color: var(--fg);
   border: 1px solid var(--border);
@@ -107,6 +108,39 @@ body {
   border-radius: 4px;
   font-size: 12px;
   cursor: pointer;
+}
+
+.top-actions select {
+  font-family: inherit;
+  appearance: auto;
+}
+
+.top-actions select:focus {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.workspace-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 260px;
+}
+
+.workspace-btn-label {
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+
+.workspace-btn-path {
+  font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+  direction: rtl;
+  text-align: left;
 }
 
 .top-actions button:hover {
@@ -344,6 +378,10 @@ body {
   color: var(--ok);
 }
 
+.log-line.log-text .body {
+  color: var(--fg);
+}
+
 .log-line.log-error .body,
 .log-line.log-submit-error .body,
 .log-line.log-malformed .body {
@@ -372,6 +410,10 @@ body {
 .log-line.log-session-new .body,
 .log-line.log-info .body {
   color: var(--fg-dim);
+}
+
+.log-line.log-engine-warn .body {
+  color: var(--accent-warm);
 }
 
 .prompt-bar {
@@ -425,6 +467,15 @@ body {
   background: var(--bg-elev-2);
   color: var(--fg-dim);
   cursor: not-allowed;
+}
+
+#prompt-submit.cancel-mode {
+  background: var(--err);
+  color: #0e0f12;
+}
+
+#prompt-submit.cancel-mode:hover {
+  filter: brightness(1.1);
 }
 
 .prompt-footer {

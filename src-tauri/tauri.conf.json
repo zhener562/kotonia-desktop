@@ -23,7 +23,7 @@
       "assetProtocol": {
         "enable": true,
         "scope": [
-          "$HOME/.kotonia/desktop/workspace/**",
+          "$HOME/**",
           "/tmp/**"
         ]
       }

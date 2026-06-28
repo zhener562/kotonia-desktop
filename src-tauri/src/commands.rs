@@ -7,6 +7,7 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use kotonia_cli::agent::agent::{Agent, AgentConfig};
 use kotonia_cli::agent::approval::ApprovalMode;
+use kotonia_cli::agent::claude_code::{claude_code_session_id, ClaudeCodeAgent};
 use kotonia_cli::agent::dispatch::DispatchAgent;
 use kotonia_cli::agent::history::{load_session_messages, HistoryStore};
 use kotonia_cli::agent::provider::Provider;
@@ -20,14 +21,64 @@ use crate::state::{AppState, SessionState};
 /// device_token from `~/.kotonia/daemon.json`.
 const DEFAULT_MODEL: &str = "kotonia-gemma4-26b";
 
-/// Sandbox workspace under the user's home. Created on first use. T1 will
-/// surface a directory picker so the operator can point the agent at a
-/// real project tree.
+/// Default engine. `react` drives kotonia-cli's own ReAct loop over a
+/// hosted provider; `claude-code` swaps in the `claude` CLI as a
+/// subprocess in headless stream-json mode (mirrors `kotonia-cli --engine
+/// claude-code`).
+const DEFAULT_ENGINE: &str = "react";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EngineChoice {
+    ReAct,
+    ClaudeCode,
+}
+
+/// Same precedence as `kotonia-cli main.rs`: `--engine claude-code` OR
+/// `--model claude-code` selects the subprocess engine; otherwise ReAct.
+fn resolve_engine(engine: Option<&str>, model: Option<&str>) -> Result<EngineChoice, String> {
+    let engine = engine.unwrap_or(DEFAULT_ENGINE);
+    if engine == "claude-code" || model == Some("claude-code") {
+        return Ok(EngineChoice::ClaudeCode);
+    }
+    if engine == "react" {
+        return Ok(EngineChoice::ReAct);
+    }
+    Err(format!(
+        "unknown engine `{engine}` (expected `react` or `claude-code`)"
+    ))
+}
+
+/// Default agent workspace under the user's home. Used when the frontend
+/// has not yet picked a workspace via the directory dialog (i.e. first
+/// launch). Created on first use.
 fn default_workspace_root() -> Result<PathBuf, String> {
     let home = std::env::var_os("HOME").ok_or_else(|| "HOME is not set".to_string())?;
     let root = PathBuf::from(home).join(".kotonia").join("desktop").join("workspace");
     std::fs::create_dir_all(&root).map_err(|e| format!("create {}: {e}", root.display()))?;
     Ok(root)
+}
+
+/// Resolve a frontend-supplied workspace path. Accepts absolute paths
+/// and `~/...`; rejects empty input and any path that doesn't already
+/// exist (we don't auto-create arbitrary dirs — the operator picked it
+/// via the OS dialog, so it really should exist). On `None`, returns
+/// the default sandbox.
+fn resolve_workspace(workspace_path: Option<&str>) -> Result<PathBuf, String> {
+    let raw = match workspace_path.map(|s| s.trim()) {
+        Some(s) if !s.is_empty() => s,
+        _ => return default_workspace_root(),
+    };
+    let expanded = expand_tilde(raw);
+    let candidate = PathBuf::from(&expanded);
+    if !candidate.is_absolute() {
+        return Err(format!("workspace must be an absolute path: {expanded}"));
+    }
+    let canonical = std::fs::canonicalize(&candidate)
+        .map_err(|e| format!("workspace not accessible: {expanded} ({e})"))?;
+    if !canonical.is_dir() {
+        return Err(format!("workspace is not a directory: {}", canonical.display()));
+    }
+    Ok(canonical)
 }
 
 #[derive(Serialize)]
@@ -84,22 +135,37 @@ pub async fn submit_task(
     prompt: String,
     session_id: String,
     model: Option<String>,
+    engine: Option<String>,
+    workspace_path: Option<String>,
 ) -> Result<SubmitTaskResponse, String> {
-    if kotonia_cli::config::load().is_none() {
+    let choice = resolve_engine(engine.as_deref(), model.as_deref())?;
+
+    // The hosted ReAct path needs a paired device_token. Claude Code runs
+    // entirely against the local `claude` binary, so the kotonia.ai login
+    // gate doesn't apply.
+    if matches!(choice, EngineChoice::ReAct) && kotonia_cli::config::load().is_none() {
         return Err(
             "not logged in. Run `kotonia-cli login` in a terminal, then restart the app."
                 .to_string(),
         );
     }
 
-    let session = get_or_create_session(&state, &session_id, model.as_deref()).await?;
+    let workspace_root = resolve_workspace(workspace_path.as_deref())?;
+    let session = get_or_create_session(
+        &state,
+        &session_id,
+        model.as_deref(),
+        choice,
+        workspace_root,
+    )
+    .await?;
     let task_id = uuid::Uuid::new_v4().to_string();
 
     let pending = state.pending_approvals.clone();
     let app_for_spawn = app.clone();
     let task_id_for_spawn = task_id.clone();
 
-    tokio::spawn(async move {
+    let work = tokio::spawn(async move {
         let mut sink = TauriEventSink {
             app: app_for_spawn.clone(),
             task_id: task_id_for_spawn.clone(),
@@ -124,10 +190,48 @@ pub async fn submit_task(
         }
     });
 
+    // Register the abort handle for cancel_task; clean up on natural
+    // completion via a sibling task that just awaits the join. If the
+    // task is aborted, the await resolves to Err(JoinError) and we
+    // still drop the map entry.
+    let abort = work.abort_handle();
+    state
+        .running_tasks
+        .lock()
+        .unwrap()
+        .insert(task_id.clone(), abort);
+    let running_for_cleanup = state.running_tasks.clone();
+    let task_id_for_cleanup = task_id.clone();
+    tokio::spawn(async move {
+        let _ = work.await;
+        running_for_cleanup
+            .lock()
+            .unwrap()
+            .remove(&task_id_for_cleanup);
+    });
+
     Ok(SubmitTaskResponse {
         task_id,
         session_id,
     })
+}
+
+#[tauri::command]
+pub async fn cancel_task(
+    state: State<'_, AppState>,
+    task_id: String,
+) -> Result<bool, String> {
+    let removed = state.running_tasks.lock().unwrap().remove(&task_id);
+    match removed {
+        Some(handle) => {
+            handle.abort();
+            Ok(true)
+        }
+        // Not an error — the task likely already finished between the
+        // user clicking and this command landing. Frontend treats `false`
+        // as "no-op, UI already settled."
+        None => Ok(false),
+    }
 }
 
 #[tauri::command]
@@ -256,14 +360,17 @@ fn expand_tilde(path: &str) -> String {
 ///   - absolute `/foo/bar.html`
 ///   - tilde   `~/foo/bar.html`
 ///   - relative `./foo.html` / `../foo.html` / bare `foo.html`
-///     → resolved against the agent's workspace (`~/.kotonia/desktop/workspace`),
-///       since that's the agent's `in_place` cwd.
+///     → resolved against the caller-supplied `workspace_path` (the agent's
+///       cwd for the active session), falling back to the default sandbox.
 ///
 /// Fails (returns a user-facing Japanese error) if the resulting path
 /// doesn't exist, isn't a file, or isn't under the scope whitelist
 /// configured in `tauri.conf.json:assetProtocol.scope`.
 #[tauri::command]
-pub async fn resolve_preview_path(path: String) -> Result<String, String> {
+pub async fn resolve_preview_path(
+    path: String,
+    workspace_path: Option<String>,
+) -> Result<String, String> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
         return Err("空のパスです".into());
@@ -275,7 +382,7 @@ pub async fn resolve_preview_path(path: String) -> Result<String, String> {
     let absolute = if path_obj.is_absolute() {
         path_obj.to_path_buf()
     } else {
-        let ws = default_workspace_root()?;
+        let ws = resolve_workspace(workspace_path.as_deref())?;
         ws.join(path_obj)
     };
 
@@ -298,14 +405,18 @@ pub async fn resolve_preview_path(path: String) -> Result<String, String> {
     }
 
     // 4. Must be inside one of the asset-protocol scope roots. Keep this
-    //    in sync with `tauri.conf.json:assetProtocol.scope`.
+    //    in sync with `tauri.conf.json:assetProtocol.scope` — both were
+    //    widened from the fixed sandbox to `$HOME` + `/tmp` when the
+    //    workspace picker landed so previews of arbitrary user-owned
+    //    project trees still resolve.
     let allowed_roots: Vec<std::path::PathBuf> = {
         let mut v = Vec::new();
-        if let Ok(ws) = default_workspace_root() {
-            if let Ok(c) = std::fs::canonicalize(&ws) {
+        if let Some(home) = std::env::var_os("HOME") {
+            let home_path = std::path::PathBuf::from(home);
+            if let Ok(c) = std::fs::canonicalize(&home_path) {
                 v.push(c);
             } else {
-                v.push(ws);
+                v.push(home_path);
             }
         }
         v.push(std::path::PathBuf::from("/tmp"));
@@ -331,6 +442,8 @@ async fn get_or_create_session(
     state: &State<'_, AppState>,
     session_id: &str,
     model_override: Option<&str>,
+    engine: EngineChoice,
+    workspace_root: PathBuf,
 ) -> Result<Arc<AsyncMutex<SessionState>>, String> {
     {
         let map = state.sessions.read().await;
@@ -339,20 +452,39 @@ async fn get_or_create_session(
         }
     }
 
-    let model = model_override.unwrap_or(DEFAULT_MODEL);
-    let workspace_root = default_workspace_root()?;
     let workspace = AgentWorkspace::in_place(workspace_root);
 
-    let provider = Provider::resolve(None, model)
-        .map_err(|e| format!("provider `{model}`: {e}"))?;
-    let mut agent_config = AgentConfig::new(ApprovalMode::Allowlist, /*in_place=*/ true);
-    agent_config.kotonia_api_base = None;
-    // Iris persona: prepended to the agent's tool-aware base prompt so
-    // the model speaks in character while keeping all the bash / tool
-    // semantics intact. See `persona::IRIS` for the prompt and the rest
-    // of the character definition.
-    agent_config.persona_prefix = Some(crate::persona::IRIS.system_prompt.to_string());
-    let mut agent = DispatchAgent::ReAct(Agent::new(&workspace.root, provider, agent_config));
+    let mut agent = match engine {
+        EngineChoice::ReAct => {
+            let model = model_override.unwrap_or(DEFAULT_MODEL);
+            let provider = Provider::resolve(None, model)
+                .map_err(|e| format!("provider `{model}`: {e}"))?;
+            let mut agent_config = AgentConfig::new(ApprovalMode::Allowlist, /*in_place=*/ true);
+            agent_config.kotonia_api_base = None;
+            // Iris persona: prepended to the agent's tool-aware base prompt so
+            // the model speaks in character while keeping all the bash / tool
+            // semantics intact. See `persona::IRIS` for the prompt and the rest
+            // of the character definition.
+            agent_config.persona_prefix = Some(crate::persona::IRIS.system_prompt.to_string());
+            DispatchAgent::ReAct(Agent::new(&workspace.root, provider, agent_config))
+        }
+        EngineChoice::ClaudeCode => {
+            // Claude Code's `--session-id` flag requires a real UUID; the
+            // host's `s_<millis>_<8hex>` ids don't qualify. Derive a stable
+            // UUID v5 so subsequent `--resume` against the host id keeps
+            // threading context. Persona is intentionally NOT prepended:
+            // Claude Code owns its own system prompt + tool catalog, and
+            // sneaking Iris's prompt in front would only confuse the
+            // subprocess. The Iris voice / avatar still wrap the output on
+            // the desktop side.
+            let cc_session = claude_code_session_id(session_id);
+            DispatchAgent::ClaudeCode(ClaudeCodeAgent::new(
+                &workspace.root,
+                cc_session,
+                /*in_place=*/ true,
+            ))
+        }
+    };
 
     match HistoryStore::open(session_id) {
         Ok(mut store) => {

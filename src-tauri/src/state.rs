@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex};
 
 use tokio::sync::{Mutex as AsyncMutex, RwLock};
+use tokio::task::AbortHandle;
 
 use kotonia_cli::agent::dispatch::DispatchAgent;
 use kotonia_cli::agent::worktree::AgentWorkspace;
@@ -27,9 +28,17 @@ pub type SessionRegistry = RwLock<HashMap<String, Arc<AsyncMutex<SessionState>>>
 /// command takes the sender back out and resolves it.
 pub type PendingApprovals = Arc<StdMutex<HashMap<String, std::sync::mpsc::Sender<bool>>>>;
 
+/// Map of `task_id → AbortHandle` for the currently-running tokio task
+/// of each submitted prompt. `cancel_task` looks up by id and aborts;
+/// the cleanup task (spawned alongside the work) removes entries on
+/// natural completion. AbortHandle (not JoinHandle) so multiple owners
+/// can hold it without the `!Clone` headache.
+pub type RunningTasks = Arc<StdMutex<HashMap<String, AbortHandle>>>;
+
 pub struct AppState {
     pub sessions: Arc<SessionRegistry>,
     pub pending_approvals: PendingApprovals,
+    pub running_tasks: RunningTasks,
 }
 
 impl AppState {
@@ -37,6 +46,7 @@ impl AppState {
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             pending_approvals: Arc::new(StdMutex::new(HashMap::new())),
+            running_tasks: Arc::new(StdMutex::new(HashMap::new())),
         }
     }
 }

@@ -7,7 +7,7 @@
 // Backend commands (see src-tauri/src/commands.rs):
 //   auth_status() → { logged_in, server, device_id_prefix }
 //   new_session() → "<session_id>"
-//   submit_task({ prompt, sessionId, model }) → { task_id, session_id }
+//   submit_task({ prompt, sessionId, model, engine }) → { task_id, session_id }
 //   respond_approval({ approvalId, approved }) → void
 //   open_login_help() → void
 //
@@ -48,9 +48,87 @@ const previewOpenExternal = document.getElementById('preview-open-external');
 const previewClose = document.getElementById('preview-close');
 const previewError = document.getElementById('preview-error');
 const previewErrorMsg = document.getElementById('preview-error-msg');
+const engineSelect = document.getElementById('engine-select');
+const btnWorkspace = document.getElementById('btn-workspace');
+const workspacePathEl = document.getElementById('workspace-path');
 
 let sessionId = null;
 let pendingApprovalId = null;
+// Task id currently running in the backend. Used to flip the submit
+// button between "send" and "cancel" so the user can stop a runaway
+// agent without restarting the app.
+let activeTaskId = null;
+// Engine the active sessionId was created with. Stays in sync with
+// engineSelect.value when the user starts a new session; if they flip the
+// selector mid-conversation we discard the old session so the new engine
+// gets a fresh agent (Rust would otherwise reuse the cached SessionState
+// and silently ignore the change).
+let sessionEngine = null;
+// Workspace dir the active sessionId was created against. Same change-
+// detection pattern as `sessionEngine`: flipping it mid-session would
+// have no effect on the cached SessionState, so we force a fresh one.
+let sessionWorkspace = null;
+
+// Workspace persisted across launches. `null` = use Rust's default
+// (~/.kotonia/desktop/workspace). User picks via the OS directory dialog.
+const WORKSPACE_LS_KEY = 'kotonia_desktop_workspace';
+let currentWorkspace = (() => {
+  try {
+    const v = localStorage.getItem(WORKSPACE_LS_KEY);
+    return v && v.trim() ? v : null;
+  } catch {
+    return null;
+  }
+})();
+
+function renderWorkspaceLabel() {
+  // Show the trailing path segments (most informative) when long. The
+  // CSS `direction: rtl` + ellipsis truncates from the LEFT, so this
+  // value just needs to contain the full path.
+  workspacePathEl.textContent = currentWorkspace || '~/.kotonia/desktop/workspace (default)';
+  workspacePathEl.title = currentWorkspace || '~/.kotonia/desktop/workspace (default)';
+}
+
+async function pickWorkspace() {
+  const dialog = window.__TAURI__?.dialog;
+  if (!dialog) {
+    appendLog('error', 'ダイアログプラグインが見つかりません (tauri-plugin-dialog 未ロード?)');
+    return;
+  }
+  let picked;
+  try {
+    picked = await dialog.open({
+      directory: true,
+      multiple: false,
+      title: 'workspace ディレクトリを選択',
+      defaultPath: currentWorkspace || undefined,
+    });
+  } catch (e) {
+    appendLog('error', 'workspace picker: ' + String(e));
+    return;
+  }
+  if (!picked) return; // user cancelled
+  if (picked === currentWorkspace) return; // no change
+  currentWorkspace = picked;
+  try {
+    localStorage.setItem(WORKSPACE_LS_KEY, picked);
+  } catch {
+    // Private mode etc. — non-fatal, just won't persist across launches.
+  }
+  renderWorkspaceLabel();
+  // Force a new session so Rust builds a fresh agent rooted at the new
+  // workspace. The cached SessionState would otherwise keep using the
+  // old dir.
+  if (sessionId) {
+    appendLog(
+      'session-new',
+      `workspace switched → starting a new session.`,
+    );
+    sessionId = null;
+    sessionEngine = null;
+    sessionWorkspace = null;
+  }
+}
 
 function escapeHtml(s) {
   return String(s)
@@ -118,7 +196,14 @@ function linkifyPaths(text) {
 
 // kinds whose body is agent-generated text that commonly contains paths.
 // System messages, slash-command echoes, errors, etc. stay plain-escaped.
-const PATH_LINK_KINDS = new Set(['obs', 'final', 'bash']);
+const PATH_LINK_KINDS = new Set(['obs', 'final', 'bash', 'text']);
+
+// Accumulator for streamed `text` events between tool calls. We buffer
+// them so the Final event can hand a complete utterance to TTS in one
+// shot — speaking each chunk on arrival would cancel the previous
+// playback mid-sentence (every speakIris call rotates the active
+// stream_id, dropping any earlier in-flight chunks).
+let streamedTextBuffer = '';
 
 function appendLog(kind, body) {
   const line = document.createElement('div');
@@ -145,16 +230,46 @@ function setSessionLabel() {
 async function ensureSession() {
   if (!sessionId) {
     sessionId = await invoke('new_session');
+    sessionEngine = engineSelect.value;
+    sessionWorkspace = currentWorkspace;
     setSessionLabel();
-    appendLog('session-new', `── new session ${sessionId.slice(0, 8)} ──`);
+    appendLog(
+      'session-new',
+      `── new session ${sessionId.slice(0, 8)} (engine: ${sessionEngine}, workspace: ${
+        sessionWorkspace || 'default'
+      }) ──`,
+    );
   }
   return sessionId;
 }
 
 async function startNewSession() {
   sessionId = await invoke('new_session');
+  sessionEngine = engineSelect.value;
+  sessionWorkspace = currentWorkspace;
   setSessionLabel();
-  appendLog('session-new', `── new session ${sessionId.slice(0, 8)} ──`);
+  appendLog(
+    'session-new',
+    `── new session ${sessionId.slice(0, 8)} (engine: ${sessionEngine}, workspace: ${
+      sessionWorkspace || 'default'
+    }) ──`,
+  );
+}
+
+// Inline notice that Claude Code's headless mode runs with
+// `--dangerously-skip-permissions` — approvals never reach the modal and
+// the Iris persona prompt is dropped. Surface once per engine flip so
+// the operator can't miss it.
+function renderEngineWarning() {
+  const engine = engineSelect.value;
+  if (engine === 'claude-code') {
+    appendLog(
+      'engine-warn',
+      'engine = claude-code (headless): 承認モーダルは表示されず ' +
+        '`--dangerously-skip-permissions` で動きます。Iris ペルソナの ' +
+        '指示も適用されません — Claude Code 自身の prompt と tool が走ります。',
+    );
+  }
 }
 
 async function loadPersona() {
@@ -246,44 +361,104 @@ async function submitTask() {
     return;
   }
 
+  // Engine flip mid-session: drop the cached session so Rust constructs
+  // a fresh DispatchAgent with the new engine. Otherwise get_or_create_session
+  // hits the cache and silently keeps using the original engine.
+  if (sessionId && sessionEngine && sessionEngine !== engineSelect.value) {
+    appendLog(
+      'session-new',
+      `engine switched ${sessionEngine} → ${engineSelect.value}; starting a new session.`,
+    );
+    sessionId = null;
+    sessionEngine = null;
+    sessionWorkspace = null;
+  }
+
   const sid = await ensureSession();
+  const engine = engineSelect.value;
+  const workspacePath = currentWorkspace; // null → backend uses default
   promptSubmit.disabled = true;
   try {
     const res = await invoke('submit_task', {
       prompt,
       sessionId: sid,
       model: null,
+      engine,
+      workspacePath,
     });
     appendLog(
       'task-submit',
       `▶ task ${res.task_id.slice(0, 8)} (session ${res.session_id.slice(0, 8)})\n${prompt}`,
     );
     promptInput.value = '';
+    setActiveTask(res.task_id);
   } catch (e) {
     appendLog('submit-error', String(e));
+    setActiveTask(null);
   } finally {
     promptSubmit.disabled = false;
     promptInput.focus();
   }
 }
 
-// Enter to submit, Shift+Enter for newline.
+function setActiveTask(taskId) {
+  activeTaskId = taskId;
+  if (taskId) {
+    promptSubmit.textContent = '中止';
+    promptSubmit.classList.add('cancel-mode');
+  } else {
+    promptSubmit.textContent = '送信';
+    promptSubmit.classList.remove('cancel-mode');
+  }
+}
+
+async function cancelActiveTask() {
+  if (!activeTaskId) return;
+  const tid = activeTaskId;
+  // Optimistically reset UI; an aborted tokio task won't emit `done`,
+  // so we can't wait for backend confirmation to flip back.
+  setActiveTask(null);
+  try {
+    const wasRunning = await invoke('cancel_task', { taskId: tid });
+    appendLog(
+      'session-new',
+      wasRunning
+        ? `■ cancelled task ${tid.slice(0, 8)}`
+        : `(task ${tid.slice(0, 8)} already finished)`,
+    );
+  } catch (e) {
+    appendLog('error', 'cancel: ' + String(e));
+  }
+}
+
+function submitOrCancel() {
+  if (activeTaskId) {
+    cancelActiveTask();
+  } else {
+    submitTask();
+  }
+}
+
+// Enter to submit (or cancel mid-task), Shift+Enter for newline.
 promptInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault();
-    submitTask();
+    submitOrCancel();
   }
 });
 
 promptForm.addEventListener('submit', (e) => {
   e.preventDefault();
-  submitTask();
+  submitOrCancel();
 });
 
 btnNewSession.addEventListener('click', startNewSession);
 btnClearLog.addEventListener('click', () => {
   logEl.innerHTML = '';
 });
+
+engineSelect.addEventListener('change', renderEngineWarning);
+btnWorkspace.addEventListener('click', pickWorkspace);
 
 // ── TTS playback (Iris voice) ────────────────────────────────────────
 // Toggle is OFF by default — autoplay policies in WebKit refuse to
@@ -1068,7 +1243,10 @@ async function openPreview(path) {
   //     human-readable error overlay
   let resolved;
   try {
-    resolved = await invoke('resolve_preview_path', { path });
+    resolved = await invoke('resolve_preview_path', {
+      path,
+      workspacePath: currentWorkspace,
+    });
   } catch (err) {
     currentPreviewPath = path;
     previewIframe.src = 'about:blank';
@@ -1129,9 +1307,16 @@ listen('agent_event', (msg) => {
   switch (ev.kind) {
     case 'iteration_start':
       appendLog('iter', `── iter ${ev.iteration}/${ev.max} ──`);
+      // New iteration = new turn boundary. Drop any leftover streamed
+      // text from a previous (possibly aborted) turn.
+      streamedTextBuffer = '';
       break;
     case 'llm_thinking':
       appendLog('thinking', '· thinking');
+      break;
+    case 'text':
+      appendLog('text', ev.text);
+      streamedTextBuffer += (streamedTextBuffer ? '\n\n' : '') + ev.text;
       break;
     case 'bash':
       appendLog('bash', `$ ${ev.command}`);
@@ -1148,15 +1333,28 @@ listen('agent_event', (msg) => {
       appendLog('obs', `${header}\n${(ev.combined || '').trimEnd()}`);
       break;
     }
-    case 'final':
-      appendLog('final', `══ final ══\n${ev.answer}`);
-      speakIris(ev.answer);
+    case 'final': {
+      // Claude Code streams its text via `text` events; the `final`
+      // body arrives empty in that path (claude_code.rs dedups it).
+      // Fall back to the streamed buffer so TTS still has content.
+      const spoken = ev.answer || streamedTextBuffer;
+      const display = ev.answer ? `══ final ══\n${ev.answer}` : '══ final ══';
+      appendLog('final', display);
+      speakIris(spoken);
+      streamedTextBuffer = '';
       break;
+    }
     case 'malformed':
       appendLog('malformed', `[malformed] ${ev.excerpt}`);
       break;
     case 'error':
       appendLog('error', `[error] ${ev.message}`);
+      // Backend may emit `error` without a following `done` (e.g. agent
+      // run_turn returned Err). Clear active state defensively so the
+      // submit button doesn't stay stuck on "中止".
+      if (msg.payload?.task_id === activeTaskId) {
+        setActiveTask(null);
+      }
       break;
     case 'done':
       appendLog(
@@ -1165,6 +1363,9 @@ listen('agent_event', (msg) => {
           ev.success ? '✓' : '✗'
         } ──`,
       );
+      if (msg.payload?.task_id === activeTaskId) {
+        setActiveTask(null);
+      }
       break;
     default:
       appendLog('info', `[unknown event] ${JSON.stringify(ev)}`);
@@ -1180,3 +1381,4 @@ loadPersona();
 refreshAuth();
 setInterval(refreshAuth, 5000);
 setSessionLabel();
+renderWorkspaceLabel();

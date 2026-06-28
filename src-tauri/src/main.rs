@@ -33,11 +33,13 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             commands::auth_status,
             commands::persona_info,
             commands::submit_task,
+            commands::cancel_task,
             commands::respond_approval,
             commands::new_session,
             commands::open_login_help,
