@@ -550,18 +550,30 @@ listen('tts_error', (msg) => {
 
 listen('tts_done', (msg) => {
   if (msg.payload?.stream_id !== ttsActiveStreamId) return;
-  if (activeStreamWantsDitto) {
-    const closingStreamId = msg.payload.stream_id;
-    // Hold the last frame for the tail of the audio (~500 ms) so the
-    // mouth doesn't snap shut a beat too early, then revert to the
-    // bundled still image. Skip the revert if a new stream has started
-    // in the meantime.
-    setTimeout(() => {
-      if (ttsActiveStreamId !== closingStreamId) return;
-      avatarFloating.classList.remove('speaking');
-      setAvatarFrameSrc(STATIC_AVATAR_SRC, /*isBlob*/ false);
-    }, 500);
-  }
+  if (!activeStreamWantsDitto) return;
+
+  const closingStreamId = msg.payload.stream_id;
+
+  // `tts_done` fires the moment the upstream stream body closes, NOT
+  // when the audio finishes playing. We've been queueing chunks into
+  // the AudioContext scheduler — `ttsNextStartTime` is the absolute
+  // ctx-time at which the LAST queued chunk ends. Compute the gap
+  // between "now" and "audio actually done" and defer the avatar
+  // revert until then (plus a small tail so the mouth doesn't snap
+  // shut on the final phoneme).
+  const remainingMs = ttsAudioCtx
+    ? Math.max(0, (ttsNextStartTime - ttsAudioCtx.currentTime) * 1000)
+    : 0;
+  const tailMs = 300;
+
+  setTimeout(() => {
+    // Skip the revert if a new stream has started in the meantime —
+    // we don't want to clobber a fresh speak that the user fired
+    // before the previous audio finished draining.
+    if (ttsActiveStreamId !== closingStreamId) return;
+    avatarFloating.classList.remove('speaking');
+    setAvatarFrameSrc(STATIC_AVATAR_SRC, /*isBlob*/ false);
+  }, remainingMs + tailMs);
 });
 
 listen('ditto_register_error', (msg) => {
