@@ -59,6 +59,13 @@ pub const IRIS: Persona = Persona {
         // tokens into Japanese prose. Keep the streaming path on so the
         // first audio chunk lands as soon as the first sentence is ready
         // — pronunciation of embedded English may suffer slightly.
+        //
+        // TEMPORARY: when issue #139 (python tts_server `generate_mixed`
+        // per-run yield) lands, flip this back to `true` so Iris gets
+        // both native-fluent English pronunciation AND streaming
+        // first-byte latency. The "fluent English" UX was actively
+        // preferred during dogfooding; we only turned it off because
+        // it was bundling the whole utterance into one chunk.
         split_mixed_languages: false,
     },
 };
