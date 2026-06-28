@@ -442,16 +442,34 @@ function preprocessForSpeech(text) {
   return cleaned;
 }
 
-// Ditto-mode sync state. When the active stream is from the
-// `/api/voice/ditto/tts/stream/avatar` endpoint, audio chunks have to
-// wait for the first JPEG frame to arrive before they start playing —
-// frame generation is slower than audio synthesis, so without the
-// hold-back the voice would lead the face by 200-400 ms and look
-// dubbed. The python ditto endpoint emits frames lazily but audio
-// chunks eagerly, so the JS side absorbs the gap.
+// Ditto-mode sync state.
+//
+// Two separate sync problems are happening at once and need different
+// fixes:
+//
+// 1. Audio leads face at the START: the first audio chunk arrives
+//    before the first frame is generated (frame gen is slower than
+//    audio synthesis). Fix: buffer incoming audio until the first
+//    `ditto_frame` lands, then flush.
+//
+// 2. Face exhausts before audio at the END: audio is scheduled into
+//    the AudioContext FUTURE (chunk N plays at startAt+sum(durations)),
+//    while frames are *displayed* in real time as they arrive. The
+//    ditto server emits frames as fast as the GPU can produce them
+//    (bursty, much faster than the 25 fps playback rate), so the
+//    client races through all 50 frames in ~200 ms while the
+//    corresponding audio is still queued out 2 seconds ahead. By the
+//    time audio actually plays, frames have all been displayed and
+//    the face freezes on the last frame. Fix: pace frame display to
+//    the intended fps relative to a known start wall-clock — each
+//    frame's `setTimeout` defers display so frame N appears at
+//    `streamStart + N / FPS` regardless of when the bytes arrived.
+const DITTO_FPS = 25;
 let activeStreamWantsDitto = false;
 let dittoAwaitingFirstFrame = false;
 let dittoAudioBuffer = [];
+let dittoStreamStartMs = 0;
+let dittoFrameIndex = 0;
 
 function base64ToUint8Array(b64) {
   const bin = atob(b64);
@@ -484,6 +502,8 @@ async function speakIris(text) {
   dittoAudioBuffer = [];
   dittoAwaitingFirstFrame = avatarEnabled;
   activeStreamWantsDitto = avatarEnabled;
+  dittoStreamStartMs = 0;
+  dittoFrameIndex = 0;
   try {
     const command = avatarEnabled ? 'ditto_speak' : 'tts_speak';
     const streamId = await invoke(command, { text: speakable });
@@ -519,24 +539,45 @@ listen('ditto_frame', async (msg) => {
   const payload = msg.payload;
   if (!payload || payload.stream_id !== ttsActiveStreamId) return;
 
+  const blob = new Blob([base64ToUint8Array(payload.jpeg_base64)], {
+    type: 'image/jpeg',
+  });
+
   // First frame: flush whatever audio chunks we've been holding so
   // they start playing in the same tick the frame becomes visible.
+  // Also pin the wall-clock origin for the subsequent FPS-paced
+  // display scheduling — every later frame is timed relative to here.
   if (dittoAwaitingFirstFrame) {
     dittoAwaitingFirstFrame = false;
     ttsNextStartTime = ttsAudioCtx ? ttsAudioCtx.currentTime : 0;
     for (const wavBytes of dittoAudioBuffer.splice(0)) {
       await playAudioChunk(wavBytes);
     }
+    dittoStreamStartMs = performance.now();
+    dittoFrameIndex = 0;
   }
 
   if (!avatarEnabled) return; // toggle flipped off mid-stream
 
-  const blob = new Blob([base64ToUint8Array(payload.jpeg_base64)], {
-    type: 'image/jpeg',
-  });
-  const url = URL.createObjectURL(blob);
-  setAvatarFrameSrc(url, /*isBlob*/ true);
-  avatarFloating.classList.add('speaking');
+  // Pace frame display to a fixed FPS instead of "as soon as bytes
+  // arrive". Without this the ditto server's bursty GPU output (50
+  // frames in 200 ms) would display all frames before the audio —
+  // which is queued into the AudioContext future — actually plays,
+  // and the face would freeze on the last frame for the remaining
+  // seconds of audio.
+  const myFrameIndex = dittoFrameIndex++;
+  const targetMs = dittoStreamStartMs + (myFrameIndex * 1000) / DITTO_FPS;
+  const delayMs = Math.max(0, targetMs - performance.now());
+  const streamIdAtSchedule = ttsActiveStreamId;
+
+  setTimeout(() => {
+    // Bail if a new speak superseded us before this frame's slot.
+    if (ttsActiveStreamId !== streamIdAtSchedule) return;
+    if (!avatarEnabled) return;
+    const url = URL.createObjectURL(blob);
+    setAvatarFrameSrc(url, /*isBlob*/ true);
+    avatarFloating.classList.add('speaking');
+  }, delayMs);
 });
 
 listen('tts_error', (msg) => {
