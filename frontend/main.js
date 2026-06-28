@@ -27,6 +27,7 @@ const sessionLabelEl = document.getElementById('session-label');
 const btnNewSession = document.getElementById('btn-new-session');
 const btnClearLog = document.getElementById('btn-clear-log');
 const btnToggleVoice = document.getElementById('btn-toggle-voice');
+const btnMic = document.getElementById('btn-mic');
 const btnTogglePreview = document.getElementById('btn-toggle-preview');
 const approvalModal = document.getElementById('approval-modal');
 const approvalReason = document.getElementById('approval-reason');
@@ -370,6 +371,216 @@ listen('tts_error', (msg) => {
 listen('tts_done', (msg) => {
   if (msg.payload?.stream_id !== ttsActiveStreamId) return;
   // No-op for now. Future: emit a 'finished talking' UI state.
+});
+
+// ── Mic capture → STT → prompt textarea (dictation mode) ─────────────
+// Click 🎙️ to start, click again or Esc to stop. The transcript is
+// dropped into the prompt textarea so the user can review / edit it
+// before sending — agent execution is high-stakes (bash on the user's
+// PC), so we deliberately do NOT auto-submit on transcription. No VAD
+// either: the user controls when to stop.
+
+let micState = 'idle'; // 'idle' | 'recording' | 'transcribing'
+let micStream = null;
+let micAudioCtx = null;
+let micProcessor = null;
+let micSource = null;
+let micSamples = []; // Float32Array chunks, concat on stop
+let micSampleRate = 16000;
+let micStartedAt = 0;
+let micElapsedTimer = null;
+
+function setMicState(state) {
+  micState = state;
+  if (state === 'idle') {
+    btnMic.removeAttribute('data-state');
+    btnMic.textContent = '🎙️ mic';
+    btnMic.disabled = false;
+  } else if (state === 'recording') {
+    btnMic.setAttribute('data-state', 'recording');
+    btnMic.textContent = '🔴 0.0s';
+    btnMic.disabled = false;
+  } else if (state === 'transcribing') {
+    btnMic.setAttribute('data-state', 'transcribing');
+    btnMic.textContent = '⏳ transcribing…';
+    btnMic.disabled = true;
+  }
+}
+
+function tickElapsed() {
+  if (micState !== 'recording') return;
+  const sec = (Date.now() - micStartedAt) / 1000;
+  btnMic.textContent = `🔴 ${sec.toFixed(1)}s`;
+}
+
+async function startMic() {
+  if (micState !== 'idle') return;
+  try {
+    // Request 16 kHz to match Whisper / Qwen3-ASR's native rate and
+    // sidestep the JS-side resampling that downsampling 48 kHz would
+    // require. Browsers may ignore the requested rate; we honor
+    // whatever ctx.sampleRate ends up at in the WAV header.
+    micAudioCtx = new AudioContext({ sampleRate: 16000 });
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    micSource = micAudioCtx.createMediaStreamSource(micStream);
+    // ScriptProcessorNode is deprecated but works everywhere. Migrate
+    // to AudioWorkletNode if WebKitGTK starts logging warnings.
+    micProcessor = micAudioCtx.createScriptProcessor(4096, 1, 1);
+    micProcessor.onaudioprocess = (e) => {
+      // Clone the channel data — the buffer is recycled on the next
+      // tick, so a slice() (not just reference) is required.
+      micSamples.push(e.inputBuffer.getChannelData(0).slice());
+    };
+    micSource.connect(micProcessor);
+    // ScriptProcessorNode needs to be connected to destination to fire
+    // onaudioprocess in some browsers. We mute the output by relying on
+    // the WebView's silent processor path.
+    micProcessor.connect(micAudioCtx.destination);
+    micSampleRate = micAudioCtx.sampleRate;
+    micSamples = [];
+    micStartedAt = Date.now();
+    setMicState('recording');
+    micElapsedTimer = setInterval(tickElapsed, 100);
+  } catch (e) {
+    appendLog('error', `mic 起動失敗: ${String(e?.message ?? e)}`);
+    await cleanupMic();
+    setMicState('idle');
+  }
+}
+
+async function cleanupMic() {
+  if (micElapsedTimer) {
+    clearInterval(micElapsedTimer);
+    micElapsedTimer = null;
+  }
+  if (micProcessor) {
+    try { micProcessor.disconnect(); } catch {}
+    micProcessor.onaudioprocess = null;
+    micProcessor = null;
+  }
+  if (micSource) {
+    try { micSource.disconnect(); } catch {}
+    micSource = null;
+  }
+  if (micStream) {
+    micStream.getTracks().forEach((t) => t.stop());
+    micStream = null;
+  }
+  if (micAudioCtx) {
+    try { await micAudioCtx.close(); } catch {}
+    micAudioCtx = null;
+  }
+}
+
+function concatSamples(chunks) {
+  let total = 0;
+  for (const c of chunks) total += c.length;
+  const out = new Float32Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    out.set(c, offset);
+    offset += c.length;
+  }
+  return out;
+}
+
+function float32ToWav(samples, sampleRate) {
+  // Standard 16-bit PCM mono WAV. 44-byte header + samples*2 bytes.
+  const buf = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buf);
+  const writeStr = (offset, s) => {
+    for (let i = 0; i < s.length; i++) view.setUint8(offset + i, s.charCodeAt(i));
+  };
+  writeStr(0, 'RIFF');
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);          // PCM fmt chunk size
+  view.setUint16(20, 1, true);           // format = PCM
+  view.setUint16(22, 1, true);           // channels = 1
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true); // byte rate (rate * channels * 2)
+  view.setUint16(32, 2, true);           // block align (channels * 2)
+  view.setUint16(34, 16, true);          // bits per sample
+  writeStr(36, 'data');
+  view.setUint32(40, samples.length * 2, true);
+  let offset = 44;
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    offset += 2;
+  }
+  return new Uint8Array(buf);
+}
+
+function bytesToBase64(bytes) {
+  let bin = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(bin);
+}
+
+async function stopMicAndTranscribe() {
+  if (micState !== 'recording') return;
+  const chunks = micSamples;
+  const rate = micSampleRate;
+  await cleanupMic();
+  setMicState('transcribing');
+
+  try {
+    const samples = concatSamples(chunks);
+    if (samples.length < rate * 0.2) {
+      // <200ms — almost certainly accidental press; don't bother the
+      // STT server. Reset and bail.
+      setMicState('idle');
+      appendLog('info', '録音が短すぎました (< 200ms)、転写を skip');
+      return;
+    }
+    const wav = float32ToWav(samples, rate);
+    const wavBase64 = bytesToBase64(wav);
+    const result = await invoke('stt_transcribe', { wavBase64 });
+    const text = (result?.text ?? '').trim();
+    if (!text) {
+      appendLog('info', '転写が空でした (無音 / ハルシ抑止により破棄)');
+      setMicState('idle');
+      return;
+    }
+    // Replace (not append) so accidental leftover doesn't get mixed in.
+    promptInput.value = text;
+    promptInput.focus();
+    // Put the caret at the end so Enter sends immediately if the user
+    // is happy with the transcript.
+    promptInput.setSelectionRange(text.length, text.length);
+    appendLog('info', `📝 ${text}  (${result?.elapsed_ms ?? '?'}ms)`);
+  } catch (e) {
+    appendLog('error', `STT 失敗: ${String(e?.message ?? e)}`);
+  } finally {
+    setMicState('idle');
+  }
+}
+
+async function cancelMic() {
+  if (micState !== 'recording') return;
+  await cleanupMic();
+  setMicState('idle');
+  appendLog('info', 'mic 録音をキャンセル');
+}
+
+btnMic.addEventListener('click', () => {
+  if (micState === 'idle') startMic();
+  else if (micState === 'recording') stopMicAndTranscribe();
+  // transcribing: button disabled, no-op
+});
+
+// Esc cancels recording (discards audio entirely). Doesn't interfere
+// with normal prompt typing because we only act when actually recording.
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && micState === 'recording') {
+    e.preventDefault();
+    cancelMic();
+  }
 });
 
 approvalApprove.addEventListener('click', () => respondApproval(true));

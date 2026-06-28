@@ -145,6 +145,15 @@ pub async fn respond_approval(
     }
 }
 
+/// Transcribe a WAV recording (base64 encoded) via kotonia.ai's STT
+/// endpoint and return the recognized text. Used by the dictation UX:
+/// the WebView records mic → encodes WAV → calls this command → drops
+/// the returned text into the prompt textarea for the user to review.
+#[tauri::command]
+pub async fn stt_transcribe(wav_base64: String) -> Result<crate::stt::TranscribeResult, String> {
+    crate::stt::transcribe(wav_base64).await
+}
+
 /// Speak text in Iris's voice. Returns the `stream_id` immediately so
 /// the frontend can correlate the streamed `tts_chunk` / `tts_done` /
 /// `tts_error` events to this call (and ignore any in-flight events

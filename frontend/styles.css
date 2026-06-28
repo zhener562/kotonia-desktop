@@ -119,6 +119,25 @@ body {
   border-color: var(--accent);
 }
 
+.top-actions button[data-state="recording"] {
+  background: var(--err);
+  color: var(--bg);
+  border-color: var(--err);
+  animation: mic-pulse 1.2s ease-in-out infinite;
+}
+
+.top-actions button[data-state="transcribing"] {
+  background: var(--bg-elev-2);
+  color: var(--fg-dim);
+  border-color: var(--border);
+  cursor: progress;
+}
+
+@keyframes mic-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
 .app-shell {
   flex: 1 1 auto;
   display: flex;
