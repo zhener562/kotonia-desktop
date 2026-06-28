@@ -322,24 +322,45 @@ function setVoiceEnabled(enabled) {
 
 btnToggleVoice.addEventListener('click', () => setVoiceEnabled(!voiceEnabled));
 
-// TTS-direction text cleanup: even with the Iris persona prompt
-// forbidding long code blocks in answers, the model still slips
-// occasionally — and reading a 500-line HTML file out loud at 5
-// minutes/page is a UX disaster. Strip fenced code blocks before
-// they hit the synthesizer and hard-cap the spoken length.
+// TTS-direction text cleanup. The displayed log keeps the full
+// original answer (with code blocks, paths, etc.) — these filters
+// only apply to what gets handed to the synthesizer, because reading
+// a 500-line HTML file or "スラッシュ ホーム スラッシュ ゼヘナ
+// スラッシュ ドット コトニア スラッシュ デスクトップ スラッシュ
+// ワークスペース スラッシュ シューティング ゲーム ドット エイチ
+// ティー エム エル" out loud is a UX disaster.
+//
+// Same regex as `linkifyPaths` — keep them in sync.
+const PATH_RE_FOR_SPEECH =
+  /(?<![\p{L}\p{N}_:/.])(?:~\/|\.{1,2}\/|\/)[^\s'"`<>()\\[\]{}]+/gu;
+const TRAILING_PUNCT_FOR_SPEECH = /[.,:;)\]'"`]+$/;
+
 function preprocessForSpeech(text) {
-  // Drop ```lang ... ``` fenced blocks entirely. Keep a brief mention
-  // so the user hears that *something* was emitted.
+  // 1. Drop fenced code blocks entirely. Keep a brief mention so the
+  //    user hears that *something* was emitted.
   let cleaned = text.replace(/```(\w+)?\n?[\s\S]*?```/g, (_, lang) => {
     return lang ? `(${lang} コードブロックは省略)` : '(コードブロックは省略)';
   });
-  // Inline `code` is short enough to read; leave it.
-  // Strip inline file-path tokens too aggressive? Keep them — Iris's
-  // "X に書きました" pattern benefits from speaking the path.
+
+  // 2. Collapse absolute / home / relative path tokens to their basename.
+  //    `/home/.../foo.html` → `foo.html`, `~/.kotonia/x.txt` → `x.txt`,
+  //    `./output/y.json` → `y.json`. Trailing sentence punctuation stays
+  //    outside the basename (`foo.html、` → `foo.html` + `、`).
+  cleaned = cleaned.replace(PATH_RE_FOR_SPEECH, (match) => {
+    const trail = match.match(TRAILING_PUNCT_FOR_SPEECH);
+    const core = trail ? match.slice(0, -trail[0].length) : match;
+    const tail = trail ? trail[0] : '';
+    const segments = core.split('/').filter((s) => s.length > 0);
+    const basename = segments.pop();
+    // Fall back to the original token if there's nothing to read
+    // (a lone `/` or `~/`); cleaner than emitting an empty string.
+    return (basename && basename.length > 0 ? basename : core) + tail;
+  });
+
+  // 3. Hard cap on overall spoken length. Trim at the last sentence
+  //    boundary so the spoken version doesn't end mid-word.
   cleaned = cleaned.trim();
   if (cleaned.length > 1000) {
-    // Hard cap. Trim at the last sentence-ish boundary so the spoken
-    // version doesn't end mid-word.
     const head = cleaned.slice(0, 1000);
     const lastStop = Math.max(
       head.lastIndexOf('。'),
