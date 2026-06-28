@@ -1,13 +1,38 @@
 # kotonia-desktop
 
-Tauri 2 shell around `kotonia-cli`'s agent loop.
+**Iris** — a Tauri 2 desktop app where a character (silver-haired android
+in a navy suit) sits in a floating window, listens to your microphone,
+runs `bash` on your machine for you, and reads the result back in her
+voice while her face lip-syncs.
 
-The agent loop runs **in-process** so the model can drive the user's PC
-directly via bash. LLM inference is **not bundled**: completions go to
-`https://kotonia.ai/api/v1/chat/completions` using the `device_token`
-written by `kotonia-cli login` (under `~/.kotonia/daemon.json`). This means
-the desktop binary stays small and the heavy GPU work happens on the
-hosted backend.
+Built on top of [kotonia-cli](https://github.com/zhener562/kotonia-cli)
+(the ReAct agent loop runs **in-process** so the model can drive your
+PC directly via bash). LLM inference is **not bundled**: chat
+completions, TTS, ASR, and Ditto lip-sync video all stream from
+`https://kotonia.ai` using the `device_token` written by
+`kotonia-cli login` (`~/.kotonia/daemon.json`). The desktop binary
+stays small; the GPU work stays hosted.
+
+## Repo layout (clone alongside)
+
+`kotonia-desktop` consumes `kotonia-cli` as a path dependency. Both
+repos must be siblings on disk:
+
+```
+~/somewhere/
+├── kotonia-cli/         git@github.com:zhener562/kotonia-cli
+└── kotonia-desktop/     git@github.com:zhener562/kotonia-desktop  (this repo)
+```
+
+The path dep is `kotonia-cli = { path = "../../kotonia-cli" }` in
+`src-tauri/Cargo.toml` — it resolves to the sibling clone above.
+
+```sh
+git clone git@github.com:zhener562/kotonia-cli
+git clone git@github.com:zhener562/kotonia-desktop
+cd kotonia-desktop/src-tauri
+cargo tauri dev   # after the prereqs below
+```
 
 ## Status (T0.5 MVP)
 
