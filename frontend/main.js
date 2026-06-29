@@ -196,7 +196,7 @@ function linkifyPaths(text) {
 
 // kinds whose body is agent-generated text that commonly contains paths.
 // System messages, slash-command echoes, errors, etc. stay plain-escaped.
-const PATH_LINK_KINDS = new Set(['obs', 'final', 'bash', 'text']);
+const PATH_LINK_KINDS = new Set(['obs', 'final', 'bash', 'text', 'inspect']);
 
 // Accumulator for streamed `text` events between tool calls. We buffer
 // them so the Final event can hand a complete utterance to TTS in one
@@ -1215,7 +1215,10 @@ logEl.addEventListener('click', async (e) => {
   const path = link.dataset.path;
   if (!path) return;
   try {
-    await invoke('open_path', { path });
+    // Pass the active workspace so relative paths like `./cute_woman.png`
+    // (typical agent observation output) resolve against the agent's
+    // cwd, not the desktop process cwd.
+    await invoke('open_path', { path, workspacePath: currentWorkspace });
   } catch (err) {
     appendLog('error', `open failed: ${String(err)}`);
   }
@@ -1331,6 +1334,15 @@ listen('agent_event', (msg) => {
         ? `[exit ${ev.exit_code} • truncated]`
         : `[exit ${ev.exit_code}]`;
       appendLog('obs', `${header}\n${(ev.combined || '').trimEnd()}`);
+      break;
+    }
+    case 'inspect_image': {
+      const kb = ev.size_bytes ? `${Math.round(ev.size_bytes / 1024)} KB` : '0 KB';
+      if (ev.error) {
+        appendLog('inspect', `[inspect_image] ✗ ${ev.path} — ${ev.error}`);
+      } else {
+        appendLog('inspect', `[inspect_image] ✓ ${ev.path} (${kb}) — attached to next turn`);
+      }
       break;
     }
     case 'final': {

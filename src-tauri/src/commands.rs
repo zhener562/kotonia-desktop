@@ -326,21 +326,39 @@ pub async fn open_login_help(app: AppHandle) -> Result<(), String> {
 /// final-answer / bash-command text is scanned for path-shaped tokens,
 /// rendered as clickable spans, and resolved through here on activation.
 ///
+/// Relative paths (`./foo.png`, `foo.png`, `../bar`) are resolved against
+/// the caller-supplied `workspace_path` — the agent's cwd for the active
+/// session, NOT the desktop process's cwd, which is wherever Tauri was
+/// launched from and unrelated to where the agent wrote files. Mirrors
+/// the resolution policy of `resolve_preview_path` so Ctrl+click and the
+/// ▶ preview button agree on what `./foo.png` means.
+///
 /// Rejects empty paths and paths the FS can't see. Anything else is handed
 /// to the opener plugin (xdg-open / open / start) — symlinks resolve there.
 #[tauri::command]
-pub async fn open_path(app: AppHandle, path: String) -> Result<(), String> {
+pub async fn open_path(
+    app: AppHandle,
+    path: String,
+    workspace_path: Option<String>,
+) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
     let trimmed = path.trim();
     if trimmed.is_empty() {
         return Err("empty path".into());
     }
     let expanded = expand_tilde(trimmed);
-    if !std::path::Path::new(&expanded).exists() {
-        return Err(format!("path does not exist: {expanded}"));
+    let path_obj = std::path::Path::new(&expanded);
+    let absolute = if path_obj.is_absolute() {
+        path_obj.to_path_buf()
+    } else {
+        let ws = resolve_workspace(workspace_path.as_deref())?;
+        ws.join(path_obj)
+    };
+    if !absolute.exists() {
+        return Err(format!("path does not exist: {}", absolute.display()));
     }
     app.opener()
-        .open_path(expanded, None::<&str>)
+        .open_path(absolute.to_string_lossy().into_owned(), None::<&str>)
         .map_err(|e| e.to_string())
 }
 
@@ -460,7 +478,12 @@ async fn get_or_create_session(
             let provider = Provider::resolve(None, model)
                 .map_err(|e| format!("provider `{model}`: {e}"))?;
             let mut agent_config = AgentConfig::new(ApprovalMode::Allowlist, /*in_place=*/ true);
-            agent_config.kotonia_api_base = None;
+            // Default-equip the kotonia.ai /api/v1 capability. The agent's
+            // bash subprocess inherits KOTONIA_API_KEY (set at desktop
+            // startup from the paired device_token in main.rs), so the
+            // curl examples appended by `kotonia_api_section_native` in
+            // crates/kotonia-cli/src/agent/prompt.rs just work.
+            agent_config.kotonia_api_base = kotonia_cli::config::load().map(|c| c.server);
             // Iris persona: prepended to the agent's tool-aware base prompt so
             // the model speaks in character while keeping all the bash / tool
             // semantics intact. See `persona::IRIS` for the prompt and the rest

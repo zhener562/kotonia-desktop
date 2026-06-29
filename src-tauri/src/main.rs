@@ -11,6 +11,21 @@ mod tts;
 use state::AppState;
 
 fn main() {
+    // Propagate the paired device_token into KOTONIA_API_KEY so the ReAct
+    // agent's bash subprocess inherits it. The backend's `require_api_token`
+    // (backend/src/handlers/auth.rs) accepts a device_token as a Bearer
+    // credential for `/api/v1/*`, so the curl examples in the agent's
+    // system prompt (`Authorization: Bearer $KOTONIA_API_KEY`) authenticate
+    // against the same paired account without a second key issuance.
+    if let Some(cfg) = kotonia_cli::config::load() {
+        if std::env::var_os("KOTONIA_API_KEY").is_none() {
+            std::env::set_var("KOTONIA_API_KEY", &cfg.device_token);
+        }
+        if std::env::var_os("KOTONIA_API_BASE").is_none() {
+            std::env::set_var("KOTONIA_API_BASE", &cfg.server);
+        }
+    }
+
     // ── Linux IME (preedit) — KNOWN UPSTREAM ISSUE ─────────────────────
     // WebKitGTK ≤ 2.52.x + ibus + Wayland: Japanese / CJK preedit text
     // is invisible while typing (only the committed text shows). Tested
