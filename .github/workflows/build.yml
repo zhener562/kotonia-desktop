@@ -35,6 +35,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: zhener562/kotonia-cli
+          # Pin the dependency so rerunning a desktop tag reproduces the
+          # original binary. Update this SHA intentionally when taking a new
+          # kotonia-cli release into kotonia-desktop.
+          ref: 414a22f9146ee9e447e4460269e8fcd2b29fbfc9
           path: kotonia-cli
 
       - name: Install Rust

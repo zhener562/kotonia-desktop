@@ -808,11 +808,10 @@ function extractSpeakableHost(url) {
 }
 
 function preprocessForSpeech(text) {
-  // 1. Drop fenced code blocks entirely. Keep a brief mention so the
-  //    user hears that *something* was emitted.
-  let cleaned = text.replace(/```(\w+)?\n?[\s\S]*?```/g, (_, lang) => {
-    return lang ? `(${lang} コードブロックは省略)` : '(コードブロックは省略)';
-  });
+  // First turn Markdown/HTML into readable prose. This is intentionally a
+  // shared boundary before every desktop TTS route (plain audio and Ditto),
+  // while the log keeps the original answer for copy/paste.
+  let cleaned = window.KotoniaSpeech.stripMarkdown(text);
 
   // 1.5. Collapse URLs to their host. Must run before the path filter
   //      so the URL's `/foo/bar` tail isn't treated as a separate path.
