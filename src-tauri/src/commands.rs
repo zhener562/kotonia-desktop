@@ -506,9 +506,11 @@ pub async fn resolve_preview_path(
 
     // 4. Must be inside one of the asset-protocol scope roots. Keep this
     //    in sync with `tauri.conf.json:assetProtocol.scope` — both were
-    //    widened from the fixed sandbox to `$HOME` + `/tmp` when the
+    //    widened from the fixed sandbox to `$HOME` + temp dirs when the
     //    workspace picker landed so previews of arbitrary user-owned
-    //    project trees still resolve.
+    //    project trees still resolve. The Tauri scope also sets
+    //    `requireLiteralLeadingDot = false`; otherwise `$HOME/**` rejects
+    //    files under hidden dirs like `~/.kotonia/...` with a protocol 403.
     let allowed_roots: Vec<std::path::PathBuf> = {
         let mut v = Vec::new();
         if let Some(home_path) = dirs::home_dir() {
@@ -518,7 +520,18 @@ pub async fn resolve_preview_path(
                 v.push(home_path);
             }
         }
-        v.push(std::path::PathBuf::from("/tmp"));
+        let temp_path = std::env::temp_dir();
+        if let Ok(c) = std::fs::canonicalize(&temp_path) {
+            v.push(c);
+        } else {
+            v.push(temp_path);
+        }
+        let slash_tmp = std::path::PathBuf::from("/tmp");
+        if let Ok(c) = std::fs::canonicalize(&slash_tmp) {
+            v.push(c);
+        } else {
+            v.push(slash_tmp);
+        }
         v
     };
     let in_scope = allowed_roots.iter().any(|root| canonical.starts_with(root));
