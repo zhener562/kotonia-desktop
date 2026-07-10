@@ -1087,11 +1087,20 @@ function tickElapsed() {
 async function startMic() {
   if (micState !== 'idle') return;
   try {
+    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextCtor) {
+      throw new Error('この WebView は AudioContext に対応していません');
+    }
+    if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+      throw new Error(
+        'この WebView ではマイク入力 API が利用できません。macOS 版は最新版に更新して、システム設定 > プライバシーとセキュリティ > マイクで kotonia-desktop を許可してください。'
+      );
+    }
     // Request 16 kHz to match Whisper / Qwen3-ASR's native rate and
     // sidestep the JS-side resampling that downsampling 48 kHz would
     // require. Browsers may ignore the requested rate; we honor
     // whatever ctx.sampleRate ends up at in the WAV header.
-    micAudioCtx = new AudioContext({ sampleRate: 16000 });
+    micAudioCtx = new AudioContextCtor({ sampleRate: 16000 });
     micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     micSource = micAudioCtx.createMediaStreamSource(micStream);
     // ScriptProcessorNode is deprecated but works everywhere. Migrate
@@ -1344,7 +1353,7 @@ async function openPreview(path) {
   previewIframe.classList.remove('hidden');
   // Cache-bust suffix so re-opening the same path after a regen reloads
   // the file from disk instead of showing the WebView's cached copy.
-  const url = convertFileSrc(resolved) + '#t=' + Date.now();
+  const url = convertFileSrc(resolved) + '?t=' + Date.now();
   previewIframe.src = url;
 }
 

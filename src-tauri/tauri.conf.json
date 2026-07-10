@@ -41,6 +41,9 @@
       "icons/icon.ico"
     ],
     "category": "DeveloperTool",
+    "macOS": {
+      "infoPlist": "Info.plist"
+    },
     "shortDescription": "Kotonia local agent",
     "longDescription": "Tauri shell driving the kotonia-cli agent loop locally, with LLM inference served by kotonia.ai via the paired device token."
   }
