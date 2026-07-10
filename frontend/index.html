@@ -96,6 +96,21 @@
     </div>
   </div>
 
+  <div id="login-modal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-body">
+      <h2>ログイン</h2>
+      <p id="login-intro" class="login-intro">
+        ブラウザで kotonia.ai を開き、下のコードを入力して承認してください。
+      </p>
+      <p id="login-code" class="login-code">――――――</p>
+      <p id="login-status" class="login-status">準備中…</p>
+      <div class="modal-actions">
+        <button id="login-cancel" type="button" class="btn-deny">閉じる</button>
+        <button id="login-open-browser" type="button" class="btn-approve">ブラウザで開く</button>
+      </div>
+    </div>
+  </div>
+
   <script src="main.js"></script>
 </body>
 </html>

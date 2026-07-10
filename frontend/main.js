@@ -6,10 +6,12 @@
 //
 // Backend commands (see src-tauri/src/commands.rs):
 //   auth_status() → { logged_in, server, device_id_prefix }
+//   start_login() → { device_code, user_code, verification_uri, expires_in, interval }
+//   poll_login({ deviceCode }) → { status: "pending" } | { status: "approved", device_id_prefix }
 //   new_session() → "<session_id>"
 //   submit_task({ prompt, sessionId, model, engine }) → { task_id, session_id }
 //   respond_approval({ approvalId, approved }) → void
-//   open_login_help() → void
+//   open_login_help({ url }) → void
 //
 // Backend events:
 //   "agent_event"      payload: { task_id, event: WireEvent }
@@ -40,6 +42,11 @@ const approvalReason = document.getElementById('approval-reason');
 const approvalCommand = document.getElementById('approval-command');
 const approvalApprove = document.getElementById('approval-approve');
 const approvalDeny = document.getElementById('approval-deny');
+const loginModal = document.getElementById('login-modal');
+const loginCode = document.getElementById('login-code');
+const loginStatus = document.getElementById('login-status');
+const loginCancel = document.getElementById('login-cancel');
+const loginOpenBrowser = document.getElementById('login-open-browser');
 const previewPane = document.getElementById('preview-pane');
 const previewIframe = document.getElementById('preview-iframe');
 const previewPath = document.getElementById('preview-path');
@@ -302,13 +309,76 @@ async function refreshAuth() {
       authStatusEl.className = 'auth-status authed';
     } else {
       authStatusEl.innerHTML =
-        '未ログイン: ターミナルで <code>kotonia-cli login</code> を実行してください';
+        '未ログイン &nbsp;<button id="auth-login-trigger" type="button" class="auth-login-btn">ログイン</button>';
       authStatusEl.className = 'auth-status unauthed';
     }
   } catch (e) {
     authStatusEl.textContent = 'auth check failed: ' + String(e);
     authStatusEl.className = 'auth-status unauthed';
   }
+}
+
+// ── Login (device-code pairing, driven from the GUI) ───────────────────
+// Same flow as `kotonia-cli login`, but polled on a JS timer instead of a
+// blocking loop, so a user who never installed the CLI can still pair.
+let loginPollTimer = null;
+
+function stopLoginPoll() {
+  if (loginPollTimer) {
+    clearInterval(loginPollTimer);
+    loginPollTimer = null;
+  }
+}
+
+function hideLoginModal() {
+  stopLoginPoll();
+  loginModal.classList.add('hidden');
+}
+
+async function startLogin() {
+  loginCode.textContent = '――――――';
+  loginStatus.textContent = '準備中…';
+  loginStatus.className = 'login-status';
+  loginOpenBrowser.onclick = null;
+  loginModal.classList.remove('hidden');
+
+  let session;
+  try {
+    session = await invoke('start_login');
+  } catch (e) {
+    loginStatus.textContent = 'エラー: ' + String(e);
+    loginStatus.className = 'login-status error';
+    return;
+  }
+
+  loginCode.textContent = session.user_code;
+  loginStatus.textContent = `ブラウザで承認するまで待機中… (${Math.max(1, Math.round(session.expires_in / 60))} 分で失効)`;
+  loginOpenBrowser.onclick = () => {
+    invoke('open_login_help', { url: session.verification_uri }).catch((e) => {
+      console.error('open_login_help failed', e);
+    });
+  };
+  // Fire once immediately too — most users won't notice the button.
+  invoke('open_login_help', { url: session.verification_uri }).catch(() => {});
+
+  stopLoginPoll();
+  loginPollTimer = setInterval(async () => {
+    try {
+      const result = await invoke('poll_login', { deviceCode: session.device_code });
+      if (result.status === 'approved') {
+        stopLoginPoll();
+        loginStatus.textContent = `承認されました (device ${result.device_id_prefix}…)`;
+        loginStatus.className = 'login-status approved';
+        await refreshAuth();
+        setTimeout(hideLoginModal, 900);
+      }
+      // status === 'pending' → keep waiting silently.
+    } catch (e) {
+      stopLoginPoll();
+      loginStatus.textContent = 'エラー: ' + String(e);
+      loginStatus.className = 'login-status error';
+    }
+  }, Math.max(session.interval, 1) * 1000);
 }
 
 function showApproval(req) {
@@ -1193,6 +1263,14 @@ document.addEventListener('keydown', (e) => {
 
 approvalApprove.addEventListener('click', () => respondApproval(true));
 approvalDeny.addEventListener('click', () => respondApproval(false));
+
+// Delegated: the login button is re-rendered into authStatusEl's innerHTML
+// on every refreshAuth() tick, so a directly-attached listener would be
+// lost each time.
+authStatusEl.addEventListener('click', (e) => {
+  if (e.target && e.target.id === 'auth-login-trigger') startLogin();
+});
+loginCancel.addEventListener('click', hideLoginModal);
 
 // Ctrl/Cmd+click on a detected path link opens it with the OS default app
 // via the `open_path` Tauri command. Plain click is intentionally a no-op

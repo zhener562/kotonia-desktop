@@ -52,6 +52,8 @@ fn main() {
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             commands::auth_status,
+            commands::start_login,
+            commands::poll_login,
             commands::persona_info,
             commands::submit_task,
             commands::cancel_task,

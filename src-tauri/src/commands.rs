@@ -113,6 +113,69 @@ pub async fn auth_status() -> AuthStatus {
     }
 }
 
+fn login_server() -> String {
+    kotonia_cli::config::load()
+        .map(|c| c.server)
+        .unwrap_or_else(|| "https://kotonia.ai".to_string())
+}
+
+#[derive(Serialize)]
+pub struct LoginSession {
+    pub device_code: String,
+    pub user_code: String,
+    pub verification_uri: String,
+    pub expires_in: i64,
+    pub interval: u32,
+}
+
+/// Start the same device-code pairing flow as `kotonia-cli login`, but
+/// driven from the GUI instead of a terminal — the point being that a
+/// user who only ever installed kotonia-desktop (never touched the CLI)
+/// can still log in.
+#[tauri::command]
+pub async fn start_login() -> Result<LoginSession, String> {
+    let server = login_server();
+    let session = kotonia_cli::login::create_device_code(&server).await?;
+    Ok(LoginSession {
+        device_code: session.device_code,
+        user_code: session.user_code,
+        verification_uri: session.verification_uri,
+        expires_in: session.expires_in,
+        interval: session.interval,
+    })
+}
+
+#[derive(Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum LoginPollResult {
+    Pending,
+    Approved { device_id_prefix: String },
+}
+
+/// One poll tick, called on a timer by the frontend (mirrors
+/// `kotonia_cli::login::run`'s blocking loop, just inverted so the caller
+/// controls the cadence). On approval, persists the pairing and — so the
+/// *currently running* process picks it up without a restart — sets the
+/// same env vars `main()` sets once at startup from the on-disk config.
+#[tauri::command]
+pub async fn poll_login(device_code: String) -> Result<LoginPollResult, String> {
+    let server = login_server();
+    match kotonia_cli::login::poll_once(&server, &device_code).await? {
+        kotonia_cli::login::PollOutcome::Pending => Ok(LoginPollResult::Pending),
+        kotonia_cli::login::PollOutcome::Approved {
+            device_id,
+            device_token,
+        } => {
+            kotonia_cli::login::save_pairing(&server, device_id.clone(), device_token.clone())?;
+            std::env::set_var("KOTONIA_API_KEY", &device_token);
+            std::env::set_var("KOTONIA_API_BASE", &server);
+            Ok(LoginPollResult::Approved {
+                device_id_prefix: device_id.chars().take(8).collect(),
+            })
+        }
+    }
+}
+
 #[tauri::command]
 pub fn new_session() -> String {
     format!(
@@ -145,8 +208,7 @@ pub async fn submit_task(
     // gate doesn't apply.
     if matches!(choice, EngineChoice::ReAct) && kotonia_cli::config::load().is_none() {
         return Err(
-            "not logged in. Run `kotonia-cli login` in a terminal, then restart the app."
-                .to_string(),
+            "not logged in. Use the login button in the header.".to_string(),
         );
     }
 
@@ -313,11 +375,14 @@ pub async fn tts_speak(app: AppHandle, text: String) -> Result<String, String> {
     Ok(stream_id)
 }
 
+/// Open a URL in the system's default browser. Used by the login flow to
+/// hand off the device-code approval step (`verification_uri` from
+/// `start_login`) to a real, already-logged-in browser tab.
 #[tauri::command]
-pub async fn open_login_help(app: AppHandle) -> Result<(), String> {
+pub async fn open_login_help(app: AppHandle, url: Option<String>) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
     app.opener()
-        .open_url("https://kotonia.ai/agent/pair", None::<&str>)
+        .open_url(url.as_deref().unwrap_or("https://kotonia.ai/agent/pair"), None::<&str>)
         .map_err(|e| e.to_string())
 }
 
