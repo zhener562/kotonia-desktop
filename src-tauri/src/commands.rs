@@ -101,11 +101,19 @@ pub fn persona_info() -> serde_json::Value {
     })
 }
 
+/// `logged_in` reflects "do we have a pairing *the server still honors*",
+/// not just "does the config file exist on disk" — otherwise an expired
+/// device_token leaves the UI stuck showing green with no way to get back
+/// to the login button. We don't poll the server on a timer to check this
+/// (no periodic background network calls); instead `state.auth_invalid`
+/// is set reactively, from the *existing* startup avatar-registration
+/// request's response, the first time the server actually rejects it.
 #[tauri::command]
-pub async fn auth_status() -> AuthStatus {
+pub fn auth_status(state: State<'_, AppState>) -> AuthStatus {
     let cfg = kotonia_cli::config::load();
+    let invalid = state.auth_invalid.load(std::sync::atomic::Ordering::Relaxed);
     AuthStatus {
-        logged_in: cfg.is_some(),
+        logged_in: cfg.is_some() && !invalid,
         server: cfg.as_ref().map(|c| c.server.clone()),
         device_id_prefix: cfg
             .as_ref()
@@ -158,7 +166,10 @@ pub enum LoginPollResult {
 /// *currently running* process picks it up without a restart — sets the
 /// same env vars `main()` sets once at startup from the on-disk config.
 #[tauri::command]
-pub async fn poll_login(device_code: String) -> Result<LoginPollResult, String> {
+pub async fn poll_login(
+    state: State<'_, AppState>,
+    device_code: String,
+) -> Result<LoginPollResult, String> {
     let server = login_server();
     match kotonia_cli::login::poll_once(&server, &device_code).await? {
         kotonia_cli::login::PollOutcome::Pending => Ok(LoginPollResult::Pending),
@@ -169,6 +180,9 @@ pub async fn poll_login(device_code: String) -> Result<LoginPollResult, String> 
             kotonia_cli::login::save_pairing(&server, device_id.clone(), device_token.clone())?;
             std::env::set_var("KOTONIA_API_KEY", &device_token);
             std::env::set_var("KOTONIA_API_BASE", &server);
+            state
+                .auth_invalid
+                .store(false, std::sync::atomic::Ordering::Relaxed);
             Ok(LoginPollResult::Approved {
                 device_id_prefix: device_id.chars().take(8).collect(),
             })
@@ -206,7 +220,10 @@ pub async fn submit_task(
     // The hosted ReAct path needs a paired device_token. Claude Code runs
     // entirely against the local `claude` binary, so the kotonia.ai login
     // gate doesn't apply.
-    if matches!(choice, EngineChoice::ReAct) && kotonia_cli::config::load().is_none() {
+    let auth_invalid = state.auth_invalid.load(std::sync::atomic::Ordering::Relaxed);
+    if matches!(choice, EngineChoice::ReAct)
+        && (kotonia_cli::config::load().is_none() || auth_invalid)
+    {
         return Err(
             "not logged in. Use the login button in the header.".to_string(),
         );

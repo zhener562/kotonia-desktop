@@ -39,6 +39,12 @@ pub struct AppState {
     pub sessions: Arc<SessionRegistry>,
     pub pending_approvals: PendingApprovals,
     pub running_tasks: RunningTasks,
+    /// Set when the server has told us our paired device_token is no
+    /// longer valid (e.g. the startup avatar registration got a 403).
+    /// `auth_status` folds this into `logged_in` so the UI can tell
+    /// "file on disk exists" apart from "server still honors it" —
+    /// without polling the server on a timer for it (see commands.rs).
+    pub auth_invalid: std::sync::atomic::AtomicBool,
 }
 
 impl AppState {
@@ -47,6 +53,7 @@ impl AppState {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             pending_approvals: Arc::new(StdMutex::new(HashMap::new())),
             running_tasks: Arc::new(StdMutex::new(HashMap::new())),
+            auth_invalid: std::sync::atomic::AtomicBool::new(false),
         }
     }
 }

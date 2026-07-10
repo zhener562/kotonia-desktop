@@ -88,6 +88,18 @@ fn main() {
                     Ok(()) => eprintln!("[ditto] avatar registered"),
                     Err(e) => {
                         eprintln!("[ditto] avatar registration failed: {e}");
+                        // 403 from our own backend's cookie-or-bearer middleware
+                        // means the paired device_token is dead (expired/revoked)
+                        // — not just "this feature is unreachable". Surface that
+                        // as "you need to log in again", since `auth_status`'s
+                        // disk-file check alone can't tell the two apart.
+                        if e.starts_with("HTTP 403") {
+                            use tauri::Manager;
+                            app_handle
+                                .state::<AppState>()
+                                .auth_invalid
+                                .store(true, std::sync::atomic::Ordering::Relaxed);
+                        }
                         use tauri::Emitter;
                         let _ = app_handle.emit(
                             "ditto_register_error",
