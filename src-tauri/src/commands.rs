@@ -52,8 +52,8 @@ fn resolve_engine(engine: Option<&str>, model: Option<&str>) -> Result<EngineCho
 /// has not yet picked a workspace via the directory dialog (i.e. first
 /// launch). Created on first use.
 fn default_workspace_root() -> Result<PathBuf, String> {
-    let home = std::env::var_os("HOME").ok_or_else(|| "HOME is not set".to_string())?;
-    let root = PathBuf::from(home).join(".kotonia").join("desktop").join("workspace");
+    let home = dirs::home_dir().ok_or_else(|| "home directory not found".to_string())?;
+    let root = home.join(".kotonia").join("desktop").join("workspace");
     std::fs::create_dir_all(&root).map_err(|e| format!("create {}: {e}", root.display()))?;
     Ok(root)
 }
@@ -364,8 +364,8 @@ pub async fn open_path(
 
 fn expand_tilde(path: &str) -> String {
     if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(home) = std::env::var_os("HOME") {
-            return format!("{}/{}", home.to_string_lossy(), rest);
+        if let Some(home) = dirs::home_dir() {
+            return home.join(rest).to_string_lossy().into_owned();
         }
     }
     path.to_string()
@@ -429,8 +429,7 @@ pub async fn resolve_preview_path(
     //    project trees still resolve.
     let allowed_roots: Vec<std::path::PathBuf> = {
         let mut v = Vec::new();
-        if let Some(home) = std::env::var_os("HOME") {
-            let home_path = std::path::PathBuf::from(home);
+        if let Some(home_path) = dirs::home_dir() {
             if let Ok(c) = std::fs::canonicalize(&home_path) {
                 v.push(c);
             } else {
