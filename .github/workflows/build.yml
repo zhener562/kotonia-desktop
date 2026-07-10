@@ -1,0 +1,73 @@
+name: Build Desktop
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            bundles: deb,appimage
+          - os: windows-latest
+            bundles: nsis,msi
+          - os: macos-latest
+            bundles: app,dmg
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout kotonia-desktop
+        uses: actions/checkout@v4
+        with:
+          path: kotonia-desktop
+
+      # kotonia-cli is a sibling path dependency
+      # (`kotonia-cli = { path = "../../kotonia-cli" }` in src-tauri/Cargo.toml),
+      # so it must be checked out next to kotonia-desktop, not inside it.
+      - name: Checkout kotonia-cli
+        uses: actions/checkout@v4
+        with:
+          repository: zhener562/kotonia-cli
+          path: kotonia-cli
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: kotonia-desktop/src-tauri
+
+      - name: Install Linux system dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libssl-dev \
+            libgtk-3-dev
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2"
+
+      - name: Build
+        working-directory: kotonia-desktop/src-tauri
+        run: cargo tauri build --bundles ${{ matrix.bundles }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kotonia-desktop-${{ matrix.os }}
+          path: |
+            kotonia-desktop/src-tauri/target/release/bundle/**
+          if-no-files-found: error
