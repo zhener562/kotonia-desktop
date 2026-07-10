@@ -1,5 +1,5 @@
 //! Ditto lip-sync streaming: agent text → audio + JPEG frame stream
-//! that animates Iris's face in time with the spoken response.
+//! that animates Eve's face in time with the spoken response.
 //!
 //! Endpoint: `/api/voice/ditto/tts/stream/avatar` (cookie- or
 //! device_token-authed; the device_token path was enabled in the
@@ -50,7 +50,7 @@ struct StreamErrorPayload {
     message: String,
 }
 
-/// True if `iris` (or whatever the persona's `avatar_id` is) is
+/// True if `eve` (or whatever the persona's `avatar_id` is) is
 /// already registered with the Ditto server. Used by the startup
 /// hook so we only POST `/ditto/prepare` once per device per persona.
 pub async fn is_avatar_registered(persona: &Persona) -> bool {

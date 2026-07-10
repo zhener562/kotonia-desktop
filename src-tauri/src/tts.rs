@@ -1,4 +1,4 @@
-//! TTS streaming: agent text → Iris's voice in the WebView.
+//! TTS streaming: agent text → Eve's voice in the WebView.
 //!
 //! Why route through Rust:
 //!   - The kotonia.ai `/api/voice/*` endpoints want a Bearer
@@ -13,7 +13,7 @@
 //!
 //! Flow:
 //!   1. `tts_speak(text, stream_id)` POSTs to the configured TTS
-//!      endpoint with Iris's voice config.
+//!      endpoint with Eve's voice config.
 //!   2. As `[len][wav]` frames arrive, we emit a `tts_chunk` Tauri
 //!      event with the base64-encoded WAV bytes and the original
 //!      `stream_id` (so the frontend can tell stale streams from the

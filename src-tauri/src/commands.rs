@@ -89,15 +89,15 @@ pub struct AuthStatus {
 }
 
 /// Static persona descriptor surfaced to the frontend so the WebView
-/// can render Iris's name + avatar without hardcoding strings on both
+/// can render Eve's name + avatar without hardcoding strings on both
 /// sides of the IPC boundary.
 #[tauri::command]
 pub fn persona_info() -> serde_json::Value {
     serde_json::json!({
-        "key": crate::persona::IRIS.key,
-        "display_name": crate::persona::IRIS.display_name,
-        "tagline": crate::persona::IRIS.tagline,
-        "avatar_url": crate::persona::IRIS.avatar_url,
+        "key": crate::persona::EVE.key,
+        "display_name": crate::persona::EVE.display_name,
+        "tagline": crate::persona::EVE.tagline,
+        "avatar_url": crate::persona::EVE.avatar_url,
     })
 }
 
@@ -337,7 +337,7 @@ pub async fn stt_transcribe(wav_base64: String) -> Result<crate::stt::Transcribe
     crate::stt::transcribe(wav_base64).await
 }
 
-/// Speak `text` with Iris's voice **plus** Ditto lip-sync video.
+/// Speak `text` with Eve's voice **plus** Ditto lip-sync video.
 /// Same `stream_id` correlation as `tts_speak`; the frontend swaps
 /// the static avatar image for the JPEG frame stream as `ditto_frame`
 /// events arrive. Audio still flows through the `tts_chunk` event,
@@ -359,14 +359,14 @@ pub async fn ditto_speak(app: AppHandle, text: String) -> Result<String, String>
             app_for_task,
             stream_for_task,
             text_owned,
-            &crate::persona::IRIS,
+            &crate::persona::EVE,
         )
         .await;
     });
     Ok(stream_id)
 }
 
-/// Speak text in Iris's voice. Returns the `stream_id` immediately so
+/// Speak text in Eve's voice. Returns the `stream_id` immediately so
 /// the frontend can correlate the streamed `tts_chunk` / `tts_done` /
 /// `tts_error` events to this call (and ignore any in-flight events
 /// from a previous, now-cancelled stream).
@@ -385,7 +385,7 @@ pub async fn tts_speak(app: AppHandle, text: String) -> Result<String, String> {
             app_for_task,
             stream_for_task,
             text_owned,
-            &crate::persona::IRIS.voice,
+            &crate::persona::EVE.voice,
         )
         .await;
     });
@@ -578,11 +578,11 @@ async fn get_or_create_session(
             // curl examples appended by `kotonia_api_section_native` in
             // crates/kotonia-cli/src/agent/prompt.rs just work.
             agent_config.kotonia_api_base = kotonia_cli::config::load().map(|c| c.server);
-            // Iris persona: prepended to the agent's tool-aware base prompt so
+            // Eve persona: prepended to the agent's tool-aware base prompt so
             // the model speaks in character while keeping all the bash / tool
-            // semantics intact. See `persona::IRIS` for the prompt and the rest
+            // semantics intact. See `persona::EVE` for the prompt and the rest
             // of the character definition.
-            agent_config.persona_prefix = Some(crate::persona::IRIS.system_prompt.to_string());
+            agent_config.persona_prefix = Some(crate::persona::EVE.system_prompt.to_string());
             DispatchAgent::ReAct(Agent::new(&workspace.root, provider, agent_config))
         }
         EngineChoice::ClaudeCode => {
@@ -591,8 +591,8 @@ async fn get_or_create_session(
             // UUID v5 so subsequent `--resume` against the host id keeps
             // threading context. Persona is intentionally NOT prepended:
             // Claude Code owns its own system prompt + tool catalog, and
-            // sneaking Iris's prompt in front would only confuse the
-            // subprocess. The Iris voice / avatar still wrap the output on
+            // sneaking Eve's prompt in front would only confuse the
+            // subprocess. The Eve voice / avatar still wrap the output on
             // the desktop side.
             let cc_session = claude_code_session_id(session_id);
             DispatchAgent::ClaudeCode(ClaudeCodeAgent::new(
