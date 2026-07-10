@@ -20,7 +20,7 @@ jobs:
           - os: windows-latest
             bundles: nsis,msi
           - os: macos-latest
-            bundles: app,dmg
+            bundles: app
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout kotonia-desktop
@@ -68,6 +68,16 @@ jobs:
         working-directory: kotonia-desktop/src-tauri
         run: cargo tauri build --bundles ${{ matrix.bundles }}
 
+      - name: Sign and zip macOS app
+        if: matrix.os == 'macos-latest'
+        run: |
+          APP_PATH="kotonia-desktop/src-tauri/target/release/bundle/macos/kotonia-desktop.app"
+          ZIP_PATH="kotonia-desktop/src-tauri/target/release/bundle/macos/kotonia-desktop_${{ runner.arch }}.app.zip"
+
+          codesign --force --deep --sign - "$APP_PATH"
+          codesign --verify --deep --strict --verbose=4 "$APP_PATH"
+          ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -77,9 +87,9 @@ jobs:
           if-no-files-found: error
 
       # Tag pushes (v0.1.0, v0.2.0, ...) publish a GitHub Release. Each
-      # matrix job uploads whatever installer types it produced; unsigned
-      # for now, so Windows shows a SmartScreen prompt and macOS needs a
-      # right-click-open the first time (deferred, see project notes).
+      # matrix job uploads whatever installer types it produced. macOS is
+      # shipped as an ad-hoc signed .app.zip for now; users may still need
+      # right-click-open until Developer ID signing and notarization are added.
       - name: Publish release assets
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
@@ -89,5 +99,5 @@ jobs:
             kotonia-desktop/src-tauri/target/release/bundle/appimage/*.AppImage
             kotonia-desktop/src-tauri/target/release/bundle/msi/*.msi
             kotonia-desktop/src-tauri/target/release/bundle/nsis/*.exe
-            kotonia-desktop/src-tauri/target/release/bundle/dmg/*.dmg
+            kotonia-desktop/src-tauri/target/release/bundle/macos/*.app.zip
           fail_on_unmatched_files: false
