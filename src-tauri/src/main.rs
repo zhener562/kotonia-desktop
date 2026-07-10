@@ -69,7 +69,7 @@ fn main() {
         .setup(|app| {
             #[cfg(target_os = "linux")]
             allow_webkit_media_permissions(app);
-            // One-shot Iris avatar registration with the Ditto server,
+            // One-shot Eve avatar registration with the Ditto server,
             // backgrounded so it doesn't block app startup. Idempotent
             // on the server (re-POST of an existing id is a no-op), so
             // the worst case is a wasted request if the user hits a
@@ -78,7 +78,7 @@ fn main() {
             // registered avatar.
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                let persona = &persona::IRIS;
+                let persona = &persona::EVE;
                 if ditto::is_avatar_registered(persona).await {
                     eprintln!("[ditto] avatar `{}` already registered", persona.avatar_id);
                     return;

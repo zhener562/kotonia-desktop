@@ -22,14 +22,14 @@
         <span id="workspace-path" class="workspace-btn-path">…</span>
       </button>
       <select id="engine-select" title="エージェントエンジンを切替 (変更時は自動で新セッション)">
-        <option value="react" selected>Iris (kotonia ReAct)</option>
+        <option value="react" selected>Eve (kotonia ReAct)</option>
         <option value="claude-code">Claude Code (headless)</option>
       </select>
       <button id="btn-new-session" type="button" title="新しいセッション">新規</button>
       <button id="btn-clear-log" type="button" title="ログをクリア">クリア</button>
       <button id="btn-mic" type="button" title="マイクで吹き込んで prompt 欄に転写 (Esc キャンセル)"><span id="btn-mic-icon">🎙️</span><span id="btn-mic-label">&nbsp;mic</span></button>
-      <button id="btn-toggle-voice" type="button" title="Iris の声を ON/OFF" aria-pressed="false">🔇 voice</button>
-      <button id="btn-toggle-avatar" type="button" title="Iris の顔を表示してリップシンク (voice ON 前提)" aria-pressed="false">👤 face</button>
+      <button id="btn-toggle-voice" type="button" title="Eve の声を ON/OFF" aria-pressed="false">🔇 voice</button>
+      <button id="btn-toggle-avatar" type="button" title="Eve の顔を表示してリップシンク (voice ON 前提)" aria-pressed="false">👤 face</button>
       <button id="btn-toggle-preview" type="button" title="プレビューペイン表示切替" hidden>▶ プレビュー</button>
     </div>
   </header>
@@ -79,7 +79,7 @@
   </footer>
 
   <div id="avatar-floating" class="avatar-floating hidden" aria-hidden="true">
-    <img id="avatar-frame" class="avatar-frame" alt="Iris" src="persona/iris.png" draggable="false">
+    <img id="avatar-frame" class="avatar-frame" alt="Eve" src="persona/eve.png" draggable="false">
     <div id="avatar-indicator" class="avatar-indicator"></div>
     <div id="avatar-resize-handle" class="avatar-resize-handle" title="リサイズ (比率は固定)"></div>
   </div>

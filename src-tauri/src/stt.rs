@@ -12,7 +12,7 @@
 //! Engine selection: Qwen3-ASR 1.7B is the better path for the user's
 //! setup (sharper on long / technical recordings — see memory
 //! `asr_tts_eval_short_clip_blindspot`). We hardcode `stt_model =
-//! "qwen3_asr"` for Iris because every utterance will be code / shell /
+//! "qwen3_asr"` for Eve because every utterance will be code / shell /
 //! repo names embedded in JA prose, which is exactly where
 //! whisper-small struggles.
 

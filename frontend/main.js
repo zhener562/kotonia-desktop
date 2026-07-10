@@ -208,7 +208,7 @@ const PATH_LINK_KINDS = new Set(['obs', 'final', 'bash', 'text', 'inspect']);
 // Accumulator for streamed `text` events between tool calls. We buffer
 // them so the Final event can hand a complete utterance to TTS in one
 // shot — speaking each chunk on arrival would cancel the previous
-// playback mid-sentence (every speakIris call rotates the active
+// playback mid-sentence (every speakPersona call rotates the active
 // stream_id, dropping any earlier in-flight chunks).
 let streamedTextBuffer = '';
 
@@ -265,7 +265,7 @@ async function startNewSession() {
 
 // Inline notice that Claude Code's headless mode runs with
 // `--dangerously-skip-permissions` — approvals never reach the modal and
-// the Iris persona prompt is dropped. Surface once per engine flip so
+// the Eve persona prompt is dropped. Surface once per engine flip so
 // the operator can't miss it.
 function renderEngineWarning() {
   const engine = engineSelect.value;
@@ -273,7 +273,7 @@ function renderEngineWarning() {
     appendLog(
       'engine-warn',
       'engine = claude-code (headless): 承認モーダルは表示されず ' +
-        '`--dangerously-skip-permissions` で動きます。Iris ペルソナの ' +
+        '`--dangerously-skip-permissions` で動きます。Eve ペルソナの ' +
         '指示も適用されません — Claude Code 自身の prompt と tool が走ります。',
     );
   }
@@ -530,7 +530,7 @@ btnClearLog.addEventListener('click', () => {
 engineSelect.addEventListener('change', renderEngineWarning);
 btnWorkspace.addEventListener('click', pickWorkspace);
 
-// ── TTS playback (Iris voice) ────────────────────────────────────────
+// ── TTS playback (Eve voice) ─────────────────────────────────────────
 // Toggle is OFF by default — autoplay policies in WebKit refuse to
 // schedule audio until a user gesture creates / resumes an
 // AudioContext. The toggle click doubles as that gesture.
@@ -574,13 +574,13 @@ btnToggleVoice.addEventListener('click', () => setVoiceEnabled(!voiceEnabled));
 // ── Avatar (Ditto lip-sync) mode ─────────────────────────────────────
 // Enabling this routes the agent's spoken answer through
 // `/api/voice/ditto/tts/stream/avatar` instead of the plain TTS path,
-// so the floating Iris portrait animates in time with the audio. Voice
+// so the floating Eve portrait animates in time with the audio. Voice
 // must also be ON for audio to actually play; we don't force-link the
 // two toggles (a user might want to see the avatar while muted, e.g.
 // for a screen capture).
 
 let avatarEnabled = false;
-const STATIC_AVATAR_SRC = 'persona/iris.png';
+const STATIC_AVATAR_SRC = 'persona/eve.png';
 let activeFrameUrl = null;
 let prevFrameUrl = null;
 
@@ -619,7 +619,7 @@ btnToggleAvatar.addEventListener('click', () => setAvatarEnabled(!avatarEnabled)
 // ── Draggable + resizable avatar (aspect-ratio locked) ───────────────
 // Stored under `kotonia_avatar_layout` in localStorage so the next
 // launch picks up where the user left off. Aspect ratio is pinned to
-// the iris.png portrait shape (2:3), so resize only takes a width
+// the eve.png portrait shape (2:3), so resize only takes a width
 // and computes height from it.
 
 const AVATAR_LAYOUT_KEY = 'kotonia_avatar_layout';
@@ -906,7 +906,7 @@ async function playAudioChunk(wavBytes) {
   }
 }
 
-async function speakIris(text) {
+async function speakPersona(text) {
   if (!voiceEnabled || !ttsAudioCtx) return;
   const speakable = preprocessForSpeech(text || '');
   if (!speakable) return;
@@ -1439,7 +1439,7 @@ listen('agent_event', (msg) => {
       const spoken = ev.answer || streamedTextBuffer;
       const display = ev.answer ? `══ final ══\n${ev.answer}` : '══ final ══';
       appendLog('final', display);
-      speakIris(spoken);
+      speakPersona(spoken);
       streamedTextBuffer = '';
       break;
     }
