@@ -38,7 +38,8 @@ jobs:
           # Pin the dependency so rerunning a desktop tag reproduces the
           # original binary. Update this SHA intentionally when taking a new
           # kotonia-cli release into kotonia-desktop.
-          ref: 414a22f9146ee9e447e4460269e8fcd2b29fbfc9
+          # v0.1.5 — inspect_image magic-byte content validation fix.
+          ref: 805c868399a65b1084225527abdb03d302806193
           path: kotonia-cli
 
       - name: Install Rust
