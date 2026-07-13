@@ -509,9 +509,25 @@ function submitOrCancel() {
   }
 }
 
+// macOS の WKWebView は、日本語 IME の変換確定 Enter でも keydown 時点の
+// isComposing が false になることがある。CompositionEvent を別途追跡し、
+// WebKit の IME 用 keyCode (229) も送信対象から除外する。
+let promptIsComposing = false;
+
+promptInput.addEventListener('compositionstart', () => {
+  promptIsComposing = true;
+});
+
+promptInput.addEventListener('compositionend', () => {
+  promptIsComposing = false;
+});
+
 // Enter to submit (or cancel mid-task), Shift+Enter for newline.
 promptInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+  const isImeComposition =
+    promptIsComposing || e.isComposing || e.keyCode === 229;
+
+  if (e.key === 'Enter' && !e.shiftKey && !isImeComposition) {
     e.preventDefault();
     submitOrCancel();
   }
