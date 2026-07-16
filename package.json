@@ -1,0 +1,15 @@
+{
+  "name": "kotonia-desktop",
+  "private": true,
+  "version": "0.1.10",
+  "scripts": {
+    "build:frontend": "tsc -p tsconfig.json",
+    "check:frontend": "tsc --noEmit -p tsconfig.json",
+    "watch:frontend": "tsc -w -p tsconfig.json",
+    "test:frontend": "node --test frontend/tests/*.test.js",
+    "test": "npm run check:frontend && npm run test:frontend"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

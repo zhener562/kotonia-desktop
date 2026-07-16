@@ -30,13 +30,15 @@ The path dep is `kotonia-cli = { path = "../../kotonia-cli" }` in
 ```sh
 git clone git@github.com:zhener562/kotonia-cli
 git clone git@github.com:zhener562/kotonia-desktop
-cd kotonia-desktop/src-tauri
-cargo tauri dev   # after the prereqs below
+cd kotonia-desktop
+npm ci
+cd src-tauri
+cargo tauri dev   # TypeScript frontend is compiled automatically
 ```
 
 ## Status (T0.5 MVP)
 
-- single-window vanilla HTML/JS shell
+- single-window HTML/TypeScript shell
 - prompt input + event log + approval modal
 - per-session worktree-less `in_place` workspace under
   `~/.kotonia/desktop/workspace/`
@@ -107,8 +109,16 @@ explicit "not logged in" error.
 ## Run (dev)
 
 ```sh
-cd crates/kotonia-desktop/src-tauri
+cd crates/kotonia-desktop
+npm ci
+cd src-tauri
 cargo tauri dev
+```
+
+For live frontend compilation in a second terminal:
+
+```sh
+npm run watch:frontend
 ```
 
 The first build pulls down Tauri's full dep tree (~150 crates, 5-10 min on
@@ -117,7 +127,10 @@ the first compile). Subsequent runs are fast.
 ## Build (release, unbundled)
 
 ```sh
-cd crates/kotonia-desktop/src-tauri
+cd crates/kotonia-desktop
+npm ci
+npm run build:frontend
+cd src-tauri
 cargo build --release
 ```
 
