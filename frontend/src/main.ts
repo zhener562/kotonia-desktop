@@ -1,4 +1,4 @@
-// kotonia desktop — vanilla JS shell over Tauri 2 IPC.
+// kotonia desktop — TypeScript shell over Tauri 2 IPC.
 //
 // Tauri 2 with `withGlobalTauri: true` exposes:
 //   window.__TAURI__.core.invoke(cmd, args)
@@ -17,47 +17,77 @@
 //   "agent_event"      payload: { task_id, event: WireEvent }
 //   "approval_request" payload: { approval_id, task_id, command, reason }
 
+interface Window {
+  __TAURI__: {
+    core: {
+      invoke: <T = any>(command: string, args?: Record<string, unknown>) => Promise<T>;
+      convertFileSrc: (path: string, protocol?: string) => string;
+    };
+    event: {
+      listen: <T = any>(
+        event: string,
+        handler: (event: { payload: T }) => void,
+      ) => Promise<() => void>;
+    };
+    dialog?: {
+      open: (options: Record<string, unknown>) => Promise<string | null>;
+    };
+  };
+  KotoniaSpeech: {
+    stripMarkdown: (text: string) => string;
+  };
+  webkitAudioContext?: typeof AudioContext;
+}
+
+function element<T extends HTMLElement>(id: string): T {
+  const found = document.getElementById(id);
+  if (!found) {
+    throw new Error(`required element #${id} was not found`);
+  }
+  return found as T;
+}
+
 const { invoke, convertFileSrc } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
-const logEl = document.getElementById('log');
-const promptForm = document.getElementById('prompt-form');
-const promptInput = document.getElementById('prompt-input');
-const promptSubmit = document.getElementById('prompt-submit');
-const authStatusEl = document.getElementById('auth-status');
-const sessionLabelEl = document.getElementById('session-label');
-const btnNewSession = document.getElementById('btn-new-session');
-const btnClearLog = document.getElementById('btn-clear-log');
-const btnToggleVoice = document.getElementById('btn-toggle-voice');
-const btnToggleAvatar = document.getElementById('btn-toggle-avatar');
-const btnMic = document.getElementById('btn-mic');
-const avatarFloating = document.getElementById('avatar-floating');
-const avatarFrame = document.getElementById('avatar-frame');
-const avatarResizeHandle = document.getElementById('avatar-resize-handle');
-const btnMicIcon = document.getElementById('btn-mic-icon');
-const btnMicLabel = document.getElementById('btn-mic-label');
-const btnTogglePreview = document.getElementById('btn-toggle-preview');
-const approvalModal = document.getElementById('approval-modal');
-const approvalReason = document.getElementById('approval-reason');
-const approvalCommand = document.getElementById('approval-command');
-const approvalApprove = document.getElementById('approval-approve');
-const approvalDeny = document.getElementById('approval-deny');
-const loginModal = document.getElementById('login-modal');
-const loginCode = document.getElementById('login-code');
-const loginStatus = document.getElementById('login-status');
-const loginCancel = document.getElementById('login-cancel');
-const loginOpenBrowser = document.getElementById('login-open-browser');
-const previewPane = document.getElementById('preview-pane');
-const previewIframe = document.getElementById('preview-iframe');
-const previewPath = document.getElementById('preview-path');
-const previewRefresh = document.getElementById('preview-refresh');
-const previewOpenExternal = document.getElementById('preview-open-external');
-const previewClose = document.getElementById('preview-close');
-const previewError = document.getElementById('preview-error');
-const previewErrorMsg = document.getElementById('preview-error-msg');
-const engineSelect = document.getElementById('engine-select');
-const btnWorkspace = document.getElementById('btn-workspace');
-const workspacePathEl = document.getElementById('workspace-path');
+const logEl = element<HTMLDivElement>('log');
+const promptForm = element<HTMLFormElement>('prompt-form');
+const promptInput = element<HTMLTextAreaElement>('prompt-input');
+const promptSubmit = element<HTMLButtonElement>('prompt-submit');
+const authStatusEl = element<HTMLDivElement>('auth-status');
+const sessionLabelEl = element<HTMLSpanElement>('session-label');
+const btnNewSession = element<HTMLButtonElement>('btn-new-session');
+const btnClearLog = element<HTMLButtonElement>('btn-clear-log');
+const btnToggleVoice = element<HTMLButtonElement>('btn-toggle-voice');
+const btnToggleAvatar = element<HTMLButtonElement>('btn-toggle-avatar');
+const btnMic = element<HTMLButtonElement>('btn-mic');
+const avatarFloating = element<HTMLDivElement>('avatar-floating');
+const avatarFrame = element<HTMLImageElement>('avatar-frame');
+const avatarResizeHandle = element<HTMLDivElement>('avatar-resize-handle');
+const btnMicIcon = element<HTMLSpanElement>('btn-mic-icon');
+const btnMicLabel = element<HTMLSpanElement>('btn-mic-label');
+const btnTogglePreview = element<HTMLButtonElement>('btn-toggle-preview');
+const approvalModal = element<HTMLDivElement>('approval-modal');
+const approvalReason = element<HTMLParagraphElement>('approval-reason');
+const approvalCommand = element<HTMLPreElement>('approval-command');
+const approvalApprove = element<HTMLButtonElement>('approval-approve');
+const approvalDeny = element<HTMLButtonElement>('approval-deny');
+const loginModal = element<HTMLDivElement>('login-modal');
+const loginCode = element<HTMLParagraphElement>('login-code');
+const loginStatus = element<HTMLParagraphElement>('login-status');
+const loginCancel = element<HTMLButtonElement>('login-cancel');
+const loginOpenBrowser = element<HTMLButtonElement>('login-open-browser');
+const previewPane = element<HTMLElement>('preview-pane');
+const previewIframe = element<HTMLIFrameElement>('preview-iframe');
+const previewPath = element<HTMLSpanElement>('preview-path');
+const previewRefresh = element<HTMLButtonElement>('preview-refresh');
+const previewOpenExternal = element<HTMLButtonElement>('preview-open-external');
+const previewClose = element<HTMLButtonElement>('preview-close');
+const previewError = element<HTMLDivElement>('preview-error');
+const previewErrorMsg = element<HTMLPreElement>('preview-error-msg');
+const engineSelect = element<HTMLSelectElement>('engine-select');
+const btnWorkspace = element<HTMLButtonElement>('btn-workspace');
+const workspacePathEl = element<HTMLSpanElement>('workspace-path');
 
 let sessionId = null;
 let pendingApprovalId = null;
@@ -282,7 +312,7 @@ function renderEngineWarning() {
 async function loadPersona() {
   try {
     const info = await invoke('persona_info');
-    const avatar = document.getElementById('persona-avatar');
+    const avatar = document.getElementById('persona-avatar') as HTMLImageElement | null;
     const name = document.getElementById('persona-name');
     const tagline = document.getElementById('persona-tagline');
     if (avatar && info.avatar_url) {
@@ -1292,7 +1322,8 @@ approvalDeny.addEventListener('click', () => respondApproval(false));
 // on every refreshAuth() tick, so a directly-attached listener would be
 // lost each time.
 authStatusEl.addEventListener('click', (e) => {
-  if (e.target && e.target.id === 'auth-login-trigger') startLogin();
+  const target = e.target as Element | null;
+  if (target?.id === 'auth-login-trigger') startLogin();
 });
 loginCancel.addEventListener('click', hideLoginModal);
 
@@ -1302,14 +1333,15 @@ loginCancel.addEventListener('click', hideLoginModal);
 // ▶ play buttons next to .html / .htm paths load that file into the
 // preview pane via the asset:// protocol (configured in tauri.conf.json).
 logEl.addEventListener('click', async (e) => {
-  const playBtn = e.target.closest && e.target.closest('.preview-link-btn');
+  const target = e.target as Element | null;
+  const playBtn = target?.closest<HTMLElement>('.preview-link-btn');
   if (playBtn) {
     e.preventDefault();
     const path = playBtn.dataset.previewPath;
     if (path) openPreview(path);
     return;
   }
-  const link = e.target.closest && e.target.closest('.path-link');
+  const link = target?.closest<HTMLElement>('.path-link');
   if (!link) return;
   e.preventDefault();
   const ctrlOrCmd = e.ctrlKey || e.metaKey;

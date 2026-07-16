@@ -1,9 +1,11 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "kotonia-desktop",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "identifier": "ai.kotonia.desktop",
   "build": {
+    "beforeDevCommand": "npm run build:frontend",
+    "beforeBuildCommand": "npm run build:frontend",
     "frontendDist": "../frontend"
   },
   "app": {

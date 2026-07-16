@@ -38,9 +38,20 @@ jobs:
           # Pin the dependency so rerunning a desktop tag reproduces the
           # original binary. Update this SHA intentionally when taking a new
           # kotonia-cli release into kotonia-desktop.
-          # v0.1.5 — inspect_image magic-byte content validation fix.
-          ref: 805c868399a65b1084225527abdb03d302806193
+          # v0.1.6 — frontend protocol v2 and resumable editor sessions.
+          ref: v0.1.6
           path: kotonia-cli
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: kotonia-desktop/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: kotonia-desktop
+        run: npm ci
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
