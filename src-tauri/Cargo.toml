@@ -30,6 +30,13 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 base64 = "0.22"
 dirs = "5"
 
+[target.'cfg(windows)'.dependencies]
+# std::fs::canonicalize returns `\\?\C:\...` verbatim paths on Windows,
+# which break path display and the `$HOME/**` asset-protocol scope match.
+# dunce::canonicalize strips the prefix whenever the path is representable
+# without it. Unix builds keep std::fs::canonicalize and never pull this in.
+dunce = "1"
+
 [target.'cfg(target_os = "linux")'.dependencies]
 # WebKitGTK silently denies media permission requests (mic / camera /
 # pointer-lock / etc.) on Linux unless the app hooks the

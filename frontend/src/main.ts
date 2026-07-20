@@ -186,7 +186,7 @@ function escapeAttr(s) {
 // directory names (`~/ドキュメント/...`) survive — purely ASCII regex would
 // truncate at the first non-ASCII byte.
 const PATH_RE =
-  /(?<![\p{L}\p{N}_:/.])(?:~\/|\.{1,2}\/|\/)[^\s'"`<>()\\[\]{}]+/gu;
+  /(?<![\p{L}\p{N}_:/.])(?:(?:~\/|\.{1,2}\/|\/)[^\s'"`<>()\\[\]{}]+|[A-Za-z]:[\\/][^\s'"`<>()[\]{}]+)/gu;
 
 // Trailing sentence/code punctuation that's almost certainly NOT part of the
 // path itself. Stripped from the linked region, then re-appended outside.
@@ -840,7 +840,7 @@ avatarResizeHandle.addEventListener('pointerup', (e) => {
 //
 // Same regex as `linkifyPaths` — keep them in sync.
 const PATH_RE_FOR_SPEECH =
-  /(?<![\p{L}\p{N}_:/.])(?:~\/|\.{1,2}\/|\/)[^\s'"`<>()\\[\]{}]+/gu;
+  /(?<![\p{L}\p{N}_:/.])(?:(?:~\/|\.{1,2}\/|\/)[^\s'"`<>()\\[\]{}]+|[A-Za-z]:[\\/][^\s'"`<>()[\]{}]+)/gu;
 const TRAILING_PUNCT_FOR_SPEECH = /[.,:;)\]'"`]+$/;
 
 // URL detection. Run *before* the path filter so a URL's `/foo/bar`
@@ -878,7 +878,9 @@ function preprocessForSpeech(text) {
     const trail = match.match(TRAILING_PUNCT_FOR_SPEECH);
     const core = trail ? match.slice(0, -trail[0].length) : match;
     const tail = trail ? trail[0] : '';
-    const segments = core.split('/').filter((s) => s.length > 0);
+    // Split on `\` too for Windows drive tokens; unix tokens can't contain
+    // `\` (excluded from their regex body), so this is a no-op for them.
+    const segments = core.split(/[\\/]/).filter((s) => s.length > 0);
     const basename = segments.pop();
     // Fall back to the original token if there's nothing to read
     // (a lone `/` or `~/`); cleaner than emitting an empty string.

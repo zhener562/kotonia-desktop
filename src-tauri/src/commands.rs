@@ -73,7 +73,7 @@ fn resolve_workspace(workspace_path: Option<&str>) -> Result<PathBuf, String> {
     if !candidate.is_absolute() {
         return Err(format!("workspace must be an absolute path: {expanded}"));
     }
-    let canonical = std::fs::canonicalize(&candidate)
+    let canonical = fs_canonicalize(&candidate)
         .map_err(|e| format!("workspace not accessible: {expanded} ({e})"))?;
     if !canonical.is_dir() {
         return Err(format!("workspace is not a directory: {}", canonical.display()));
@@ -429,6 +429,7 @@ pub async fn open_path(
         return Err("empty path".into());
     }
     let expanded = expand_tilde(trimmed);
+    let expanded = translate_unix_drive_path(&expanded);
     let path_obj = std::path::Path::new(&expanded);
     let absolute = if path_obj.is_absolute() {
         path_obj.to_path_buf()
@@ -450,6 +451,49 @@ fn expand_tilde(path: &str) -> String {
             return home.join(rest).to_string_lossy().into_owned();
         }
     }
+    // Windows users type `~\foo` as naturally as `~/foo`.
+    #[cfg(windows)]
+    if let Some(rest) = path.strip_prefix("~\\") {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(rest).to_string_lossy().into_owned();
+        }
+    }
+    path.to_string()
+}
+
+/// `std::fs::canonicalize` on Windows returns `\\?\C:\...` verbatim paths,
+/// which break path display and the `$HOME/**` asset-protocol scope glob.
+/// `dunce::canonicalize` strips the prefix whenever the path is
+/// representable without it. Unix keeps the std call — identical behavior.
+#[cfg(windows)]
+use dunce::canonicalize as fs_canonicalize;
+#[cfg(not(windows))]
+use std::fs::canonicalize as fs_canonicalize;
+
+/// Git Bash prints win32 paths as `/c/Users/...` and WSL as
+/// `/mnt/c/Users/...`, so agent observations contain unix-style tokens the
+/// Windows FS can't see. Map the drive-letter forms back (`C:\Users\...`)
+/// so Ctrl+click and the HTML preview still resolve. Anything that doesn't
+/// look like a drive path passes through untouched; on mac/linux this is
+/// the identity.
+#[cfg(windows)]
+fn translate_unix_drive_path(path: &str) -> String {
+    let rest = path.strip_prefix("/mnt/").or_else(|| path.strip_prefix('/'));
+    if let Some(rest) = rest {
+        let (drive, tail) = rest.split_once('/').unwrap_or((rest, ""));
+        if drive.len() == 1 && drive.as_bytes()[0].is_ascii_alphabetic() {
+            return format!(
+                "{}:\\{}",
+                drive.to_ascii_uppercase(),
+                tail.replace('/', "\\")
+            );
+        }
+    }
+    path.to_string()
+}
+
+#[cfg(not(windows))]
+fn translate_unix_drive_path(path: &str) -> String {
     path.to_string()
 }
 
@@ -478,6 +522,7 @@ pub async fn resolve_preview_path(
 
     // 1. Expand tilde and resolve relative paths against the workspace.
     let raw = expand_tilde(trimmed);
+    let raw = translate_unix_drive_path(&raw);
     let path_obj = std::path::Path::new(&raw);
     let absolute = if path_obj.is_absolute() {
         path_obj.to_path_buf()
@@ -488,7 +533,7 @@ pub async fn resolve_preview_path(
 
     // 2. Canonicalize (resolves `.`, `..`, symlinks). If the file is
     //    missing, this fails with a clear OS error.
-    let canonical = std::fs::canonicalize(&absolute).map_err(|e| {
+    let canonical = fs_canonicalize(&absolute).map_err(|e| {
         format!(
             "ファイルが見つかりません: {} ({e})",
             absolute.display()
@@ -514,20 +559,20 @@ pub async fn resolve_preview_path(
     let allowed_roots: Vec<std::path::PathBuf> = {
         let mut v = Vec::new();
         if let Some(home_path) = dirs::home_dir() {
-            if let Ok(c) = std::fs::canonicalize(&home_path) {
+            if let Ok(c) = fs_canonicalize(&home_path) {
                 v.push(c);
             } else {
                 v.push(home_path);
             }
         }
         let temp_path = std::env::temp_dir();
-        if let Ok(c) = std::fs::canonicalize(&temp_path) {
+        if let Ok(c) = fs_canonicalize(&temp_path) {
             v.push(c);
         } else {
             v.push(temp_path);
         }
         let slash_tmp = std::path::PathBuf::from("/tmp");
-        if let Ok(c) = std::fs::canonicalize(&slash_tmp) {
+        if let Ok(c) = fs_canonicalize(&slash_tmp) {
             v.push(c);
         } else {
             v.push(slash_tmp);
