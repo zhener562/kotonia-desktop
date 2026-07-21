@@ -19,7 +19,7 @@ use crate::state::{AppState, SessionState};
 /// Default model alias. Resolves through kotonia-cli's provider registry to
 /// the hosted `/api/v1/chat/completions` endpoint, authenticating with the
 /// device_token from `~/.kotonia/daemon.json`.
-const DEFAULT_MODEL: &str = "kotonia-gemma4-26b";
+const DEFAULT_MODEL: &str = "kotonia-llm-basic";
 
 /// Default engine. `react` drives kotonia-cli's own ReAct loop over a
 /// hosted provider; `claude-code` swaps in the `claude` CLI as a

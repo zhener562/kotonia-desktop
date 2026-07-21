@@ -185,7 +185,7 @@ on disk.
 ## Known limits / future work
 
 - Workspace is hardcoded to `~/.kotonia/desktop/workspace/`. T1 = picker.
-- Model is hardcoded to `kotonia-gemma4-26b`. T1 = selector.
+- Model is hardcoded to `kotonia-llm-basic`. T1 = selector.
 - No "character chat" UI surface yet; this is the bare ReAct console. T1
   embeds the existing `/chat/studio` web UI in a second webview, sharing
   the kotonia.ai session cookie for full persona/voice access.
