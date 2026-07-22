@@ -345,7 +345,11 @@ pub async fn stt_transcribe(wav_base64: String) -> Result<crate::stt::Transcribe
 /// audio until the first `ditto_frame` lands so face + voice start
 /// together (frame generation is slower than audio synthesis).
 #[tauri::command]
-pub async fn ditto_speak(app: AppHandle, text: String) -> Result<String, String> {
+pub async fn ditto_speak(
+    app: AppHandle,
+    text: String,
+    instruct: Option<String>,
+) -> Result<String, String> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return Err("空文字は読めません".into());
@@ -359,6 +363,7 @@ pub async fn ditto_speak(app: AppHandle, text: String) -> Result<String, String>
             app_for_task,
             stream_for_task,
             text_owned,
+            instruct,
             &crate::persona::EVE,
         )
         .await;
@@ -371,7 +376,11 @@ pub async fn ditto_speak(app: AppHandle, text: String) -> Result<String, String>
 /// `tts_error` events to this call (and ignore any in-flight events
 /// from a previous, now-cancelled stream).
 #[tauri::command]
-pub async fn tts_speak(app: AppHandle, text: String) -> Result<String, String> {
+pub async fn tts_speak(
+    app: AppHandle,
+    text: String,
+    instruct: Option<String>,
+) -> Result<String, String> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return Err("空文字は読めません".into());
@@ -385,6 +394,7 @@ pub async fn tts_speak(app: AppHandle, text: String) -> Result<String, String> {
             app_for_task,
             stream_for_task,
             text_owned,
+            instruct,
             &crate::persona::EVE.voice,
         )
         .await;

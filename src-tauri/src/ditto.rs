@@ -152,7 +152,13 @@ pub async fn register_avatar(persona: &'static Persona) -> Result<(), String> {
 /// `tts_chunk` (same shape the TTS-only path uses, so the frontend
 /// can share the AudioContext scheduler) and JPEG frames as
 /// `ditto_frame`. `stream_id` correlates everything.
-pub async fn run_stream(app: AppHandle, stream_id: String, text: String, persona: &'static Persona) {
+pub async fn run_stream(
+    app: AppHandle,
+    stream_id: String,
+    text: String,
+    instruct: Option<String>,
+    persona: &'static Persona,
+) {
     let cfg = match kotonia_cli::config::load() {
         Some(c) => c,
         None => {
@@ -168,6 +174,10 @@ pub async fn run_stream(app: AppHandle, stream_id: String, text: String, persona
     };
 
     let voice = &persona.voice;
+    // Per-turn `{{VOICE: ...}}` acting direction (Qwen3 only), merged
+    // behind the persona's base register. The ditto→TTS proxy forwards
+    // `instruct` only for the qwen3 backend. `None` → server default.
+    let merged_instruct = voice.merged_instruct(instruct.as_deref());
     let body = serde_json::json!({
         "text": text,
         "avatar_id": persona.avatar_id,
@@ -177,6 +187,7 @@ pub async fn run_stream(app: AppHandle, stream_id: String, text: String, persona
         "lang": match voice.language { "ja" => "j", "en" => "a", "zh" => "z", other => other },
         "speed": voice.speed,
         "speaker": voice.speaker,
+        "instruct": merged_instruct,
         "fps": 25,
         // Qwen3-TTS path inside Ditto: keep the same streaming-friendly
         // setting we use on the pure-TTS path (see persona.rs comment).

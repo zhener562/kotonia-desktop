@@ -853,6 +853,43 @@ function extractSpeakableHost(url) {
   return m ? m[1] : url;
 }
 
+// Speech-channel markers, mirroring the hage web contract:
+//   {{VOICE: ...}} — vocal-acting direction; rides the Qwen3 `instruct`.
+//   {{SPEAK: ...}} — the spoken channel override. When present, ONLY this is
+//     read aloud (the full answer stays on screen). Absent → the sanitized
+//     answer is spoken, i.e. today's behavior. This is the voice/text split:
+//     the model decides what belongs to the ear vs the screen.
+// Both sit at the start of the final answer, must never be spoken or shown,
+// and are matched globally + position-independently so stray copies also go.
+const VOICE_MARKER_RE = /\{\{\s*VOICE\s*:\s*([\s\S]*?)\}\}/gi;
+const SPEAK_MARKER_RE = /\{\{\s*SPEAK\s*:\s*([\s\S]*?)\}\}/gi;
+
+// Pull the first {{VOICE}} direction and {{SPEAK}} override out of an agent
+// answer and return the text with every marker removed. `direction` → TTS
+// instruct; `spoken` → what to synthesize when set; `clean` → what to display.
+function extractSpeechMarkers(text) {
+  let direction = null;
+  let spoken = null;
+  const clean = String(text ?? '')
+    .replace(VOICE_MARKER_RE, (_, dir) => {
+      if (direction === null) {
+        const d = String(dir).replace(/\s+/g, ' ').trim();
+        if (d) direction = d;
+      }
+      return '';
+    })
+    .replace(SPEAK_MARKER_RE, (_, say) => {
+      if (spoken === null) {
+        const s = String(say).replace(/\s+/g, ' ').trim();
+        if (s) spoken = s;
+      }
+      return '';
+    })
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return { direction, spoken, clean };
+}
+
 function preprocessForSpeech(text) {
   // First turn Markdown/HTML into readable prose. This is intentionally a
   // shared boundary before every desktop TTS route (plain audio and Ditto),
@@ -953,7 +990,10 @@ async function playAudioChunk(wavBytes) {
 
 async function speakPersona(text) {
   if (!voiceEnabled || !ttsAudioCtx) return;
-  const speakable = preprocessForSpeech(text || '');
+  // Peel off the speech markers first: {{VOICE}} → TTS instruct, {{SPEAK}} →
+  // the spoken override. Speak SPEAK when present, else the sanitized answer.
+  const { direction, spoken, clean } = extractSpeechMarkers(text || '');
+  const speakable = preprocessForSpeech(spoken || clean);
   if (!speakable) return;
   // Reset per-stream sync state BEFORE invoke, so any in-flight chunk
   // from a previous stream that beats us to the listener is correctly
@@ -965,7 +1005,10 @@ async function speakPersona(text) {
   dittoFrameIndex = 0;
   try {
     const command = avatarEnabled ? 'ditto_speak' : 'tts_speak';
-    const streamId = await invoke(command, { text: speakable });
+    const streamId = await invoke(command, {
+      text: speakable,
+      instruct: direction || undefined,
+    });
     ttsActiveStreamId = streamId;
     // Reset the playback head so the new utterance starts immediately
     // rather than queueing behind a previous (stale) stream that had
@@ -1451,10 +1494,15 @@ listen('agent_event', (msg) => {
     case 'llm_thinking':
       appendLog('thinking', '· thinking');
       break;
-    case 'text':
-      appendLog('text', ev.text);
+    case 'text': {
+      // Display without the speech markers; keep the raw text in the buffer
+      // so the final-step extraction still finds VOICE/SPEAK (claude-code
+      // path speaks from the buffer, not `ev.answer`).
+      const shown = extractSpeechMarkers(ev.text).clean;
+      if (shown) appendLog('text', shown);
       streamedTextBuffer += (streamedTextBuffer ? '\n\n' : '') + ev.text;
       break;
+    }
     case 'bash':
       appendLog('bash', `$ ${ev.command}`);
       break;
@@ -1484,7 +1532,8 @@ listen('agent_event', (msg) => {
       // body arrives empty in that path (claude_code.rs dedups it).
       // Fall back to the streamed buffer so TTS still has content.
       const spoken = ev.answer || streamedTextBuffer;
-      const display = ev.answer ? `══ final ══\n${ev.answer}` : '══ final ══';
+      const cleanAnswer = ev.answer ? extractSpeechMarkers(ev.answer).clean : '';
+      const display = cleanAnswer ? `══ final ══\n${cleanAnswer}` : '══ final ══';
       appendLog('final', display);
       speakPersona(spoken);
       streamedTextBuffer = '';

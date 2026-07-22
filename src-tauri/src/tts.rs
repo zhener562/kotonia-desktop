@@ -54,6 +54,7 @@ pub async fn run_stream(
     app: AppHandle,
     stream_id: String,
     text: String,
+    instruct: Option<String>,
     voice: &'static VoiceConfig,
 ) {
     let cfg = match kotonia_cli::config::load() {
@@ -87,12 +88,19 @@ pub async fn run_stream(
         }
     };
 
+    // Per-turn `{{VOICE: ...}}` acting direction (Qwen3 only), merged
+    // behind the persona's base register. `None` → server default.
+    let merged_instruct = voice.merged_instruct(instruct.as_deref());
+
     let body = match voice.engine {
         "qwen3" => serde_json::json!({
             "text": text,
             "language": voice.language,
             "speaker": voice.speaker,
             "speed": voice.speed,
+            // Serializes to null when there's no direction; the backend
+            // proxy's Option<String> maps null → server default instruct.
+            "instruct": merged_instruct,
             // Critical for first-byte latency: the python tts_server
             // defaults this to true, which bundles JA+EN mixed input
             // into a single chunk emitted only after full generation.
