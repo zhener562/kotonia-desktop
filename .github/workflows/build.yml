@@ -36,11 +36,11 @@ jobs:
         with:
           repository: zhener562/kotonia-cli
           # Pin the dependency so rerunning a desktop tag reproduces the
-          # original binary. Update this SHA intentionally when taking a new
+          # original binary. Update this tag intentionally when taking a new
           # kotonia-cli release into kotonia-desktop.
-          # TEMP (fix/windows-bash: verify Windows bash/path fixes on CI).
-          # Revert to a released tag (was v0.1.6) before merging to main.
-          ref: 67defbe32428ea6d3d2ba902b6c0a7f2f9d93fe7
+          # v0.1.8 — win32 bash resolver (skips the System32 WSL launcher),
+          # the CLI half of the Windows support landed in PR #7.
+          ref: v0.1.8
           path: kotonia-cli
 
       - name: Install Node.js
