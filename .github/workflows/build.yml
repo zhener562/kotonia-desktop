@@ -38,8 +38,9 @@ jobs:
           # Pin the dependency so rerunning a desktop tag reproduces the
           # original binary. Update this SHA intentionally when taking a new
           # kotonia-cli release into kotonia-desktop.
-          # v0.1.6 — frontend protocol v2 and resumable editor sessions.
-          ref: v0.1.6
+          # TEMP (fix/windows-bash: verify Windows bash/path fixes on CI).
+          # Revert to a released tag (was v0.1.6) before merging to main.
+          ref: 67defbe32428ea6d3d2ba902b6c0a7f2f9d93fe7
           path: kotonia-cli
 
       - name: Install Node.js
