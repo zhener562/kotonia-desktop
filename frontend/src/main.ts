@@ -12,6 +12,8 @@
 //   submit_task({ prompt, sessionId, model, engine }) → { task_id, session_id }
 //   respond_approval({ approvalId, approved }) → void
 //   open_login_help({ url }) → void
+//   check_for_update() → null | { version, current_version }
+//   install_update() → installs the signed update and restarts
 //
 // Backend events:
 //   "agent_event"      payload: { task_id, event: WireEvent }
@@ -105,6 +107,41 @@ let sessionEngine = null;
 // detection pattern as `sessionEngine`: flipping it mid-session would
 // have no effect on the cached SessionState, so we force a fresh one.
 let sessionWorkspace = null;
+
+interface UpdateInfo {
+  version: string;
+  current_version: string;
+}
+
+async function checkForUpdate() {
+  let update: UpdateInfo | null;
+  try {
+    update = await invoke<UpdateInfo | null>('check_for_update');
+  } catch (e) {
+    // Offline startup is normal. Keep the failure in the developer console
+    // rather than adding a red row to every disconnected session.
+    console.warn('update check failed', e);
+    return;
+  }
+  if (!update) return;
+
+  appendLog(
+    'info',
+    `Kotonia Desktop ${update.version} を利用できます（現在 ${update.current_version}）。`,
+  );
+  const accepted = window.confirm(
+    `Kotonia Desktop ${update.version} に更新しますか？\n\n` +
+      '署名を検証してインストールした後、アプリを再起動します。',
+  );
+  if (!accepted) return;
+
+  appendLog('info', '最新版をダウンロードしてインストールしています…');
+  try {
+    await invoke('install_update');
+  } catch (e) {
+    appendLog('error', `自動更新に失敗しました: ${String(e)}`);
+  }
+}
 
 // Workspace persisted across launches. `null` = use Rust's default
 // (~/.kotonia/desktop/workspace). User picks via the OS directory dialog.
@@ -1579,3 +1616,4 @@ refreshAuth();
 setInterval(refreshAuth, 5000);
 setSessionLabel();
 renderWorkspaceLabel();
+void checkForUpdate();

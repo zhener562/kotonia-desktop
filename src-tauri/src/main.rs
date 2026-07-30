@@ -7,6 +7,7 @@ mod persona;
 mod state;
 mod stt;
 mod tts;
+mod updater;
 
 use state::AppState;
 
@@ -49,6 +50,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             commands::auth_status,
@@ -65,6 +67,8 @@ fn main() {
             commands::tts_speak,
             commands::ditto_speak,
             commands::stt_transcribe,
+            updater::check_for_update,
+            updater::install_update,
         ])
         .setup(|app| {
             #[cfg(target_os = "linux")]
@@ -101,10 +105,8 @@ fn main() {
                                 .store(true, std::sync::atomic::Ordering::Relaxed);
                         }
                         use tauri::Emitter;
-                        let _ = app_handle.emit(
-                            "ditto_register_error",
-                            serde_json::json!({ "message": e }),
-                        );
+                        let _ = app_handle
+                            .emit("ditto_register_error", serde_json::json!({ "message": e }));
                     }
                 }
             });
