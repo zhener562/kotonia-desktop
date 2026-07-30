@@ -1613,7 +1613,7 @@ listen('approval_request', (msg) => {
 // Boot.
 loadPersona();
 refreshAuth();
-setInterval(refreshAuth, 5000);
+setInterval(refreshAuth, 60_000);
 setSessionLabel();
 renderWorkspaceLabel();
 void checkForUpdate();

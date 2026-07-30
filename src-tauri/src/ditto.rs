@@ -22,9 +22,10 @@
 use base64::Engine as _;
 use futures_util::StreamExt;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::persona::Persona;
+use crate::state::AppState;
 
 #[derive(Serialize, Clone)]
 struct TtsChunkPayload {
@@ -50,20 +51,16 @@ struct StreamErrorPayload {
 }
 
 /// True if `eve` (or whatever the persona's `avatar_id` is) is
-/// already registered with the Ditto server. Used by the startup
-/// hook so we only POST `/api/v1/avatars` once per device per persona.
-pub async fn is_avatar_registered(persona: &Persona) -> bool {
-    let Some(cfg) = kotonia_cli::config::load() else {
-        return false;
-    };
+/// already registered with the Ditto server. Called lazily on the first
+/// avatar utterance instead of introducing network side effects at startup.
+async fn is_avatar_registered(persona: &Persona) -> Result<bool, String> {
+    let cfg = kotonia_cli::config::load().ok_or_else(|| "not logged in".to_string())?;
     let url = format!("{}/api/v1/avatars", cfg.server.trim_end_matches('/'));
-    let Ok(client) = reqwest::Client::builder()
+    let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
-    else {
-        return false;
-    };
-    let Ok(res) = client
+        .map_err(|e| format!("http client: {e}"))?;
+    let res = client
         .get(&url)
         .header(
             reqwest::header::AUTHORIZATION,
@@ -71,15 +68,16 @@ pub async fn is_avatar_registered(persona: &Persona) -> bool {
         )
         .send()
         .await
-    else {
-        return false;
-    };
+        .map_err(|e| format!("request: {e}"))?;
     if !res.status().is_success() {
-        return false;
+        let status = res.status();
+        let detail = res.text().await.unwrap_or_default();
+        return Err(format!("HTTP {status}: {}", detail.trim()));
     }
-    let Ok(json): Result<serde_json::Value, _> = res.json().await else {
-        return false;
-    };
+    let json: serde_json::Value = res
+        .json()
+        .await
+        .map_err(|e| format!("parse avatars response: {e}"))?;
     // Response shape is `{ "avatars": [{"avatar_id": "...", ...}, ...] }`
     // (the python ditto server). Fallback to top-level array if the
     // shape differs.
@@ -89,20 +87,20 @@ pub async fn is_avatar_registered(persona: &Persona) -> bool {
         .cloned()
         .or_else(|| json.as_array().cloned())
         .unwrap_or_default();
-    list.iter().any(|entry| {
+    Ok(list.iter().any(|entry| {
         entry
             .get("avatar_id")
             .and_then(|v| v.as_str())
             .map(|id| id == persona.avatar_id)
             .unwrap_or(false)
-    })
+    }))
 }
 
 /// One-shot registration: upload the persona's bundled image to
 /// `/api/v1/avatars` so the Ditto server caches its facial
 /// reference under `persona.avatar_id`. Idempotent on the server
 /// side — re-registering an existing id is a no-op.
-pub async fn register_avatar(persona: &'static Persona) -> Result<(), String> {
+async fn register_avatar(persona: &'static Persona) -> Result<(), String> {
     let cfg = kotonia_cli::config::load().ok_or_else(|| "not logged in".to_string())?;
 
     let form = reqwest::multipart::Form::new()
@@ -140,6 +138,24 @@ pub async fn register_avatar(persona: &'static Persona) -> Result<(), String> {
     Ok(())
 }
 
+async fn ensure_avatar_ready(app: &AppHandle, persona: &'static Persona) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let mut ready = state.avatar_ready.lock().await;
+    if *ready {
+        return Ok(());
+    }
+
+    if !is_avatar_registered(persona).await? {
+        eprintln!(
+            "[ditto] lazily registering avatar `{}` on first use",
+            persona.avatar_id
+        );
+        register_avatar(persona).await?;
+    }
+    *ready = true;
+    Ok(())
+}
+
 /// Speak `text` with lip-sync video. Audio chunks are emitted as
 /// `tts_chunk` (same shape the TTS-only path uses, so the frontend
 /// can share the AudioContext scheduler) and JPEG frames as
@@ -151,6 +167,17 @@ pub async fn run_stream(
     instruct: Option<String>,
     persona: &'static Persona,
 ) {
+    if let Err(message) = ensure_avatar_ready(&app, persona).await {
+        let _ = app.emit(
+            "tts_error",
+            StreamErrorPayload {
+                stream_id,
+                message: format!("avatar preparation failed: {message}"),
+            },
+        );
+        return;
+    }
+
     let cfg = match kotonia_cli::config::load() {
         Some(c) => c,
         None => {
