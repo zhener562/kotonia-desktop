@@ -83,6 +83,9 @@ jobs:
 
       - name: Build
         working-directory: kotonia-desktop/src-tauri
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         run: cargo tauri build --bundles ${{ matrix.bundles }}
 
       - name: Sign and zip macOS app
@@ -91,7 +94,6 @@ jobs:
           APP_PATH="kotonia-desktop/src-tauri/target/release/bundle/macos/kotonia-desktop.app"
           ZIP_PATH="kotonia-desktop/src-tauri/target/release/bundle/macos/kotonia-desktop_${{ runner.arch }}.app.zip"
 
-          codesign --force --deep --sign - "$APP_PATH"
           codesign --verify --deep --strict --verbose=4 "$APP_PATH"
           ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
 
@@ -114,7 +116,47 @@ jobs:
           files: |
             kotonia-desktop/src-tauri/target/release/bundle/deb/*.deb
             kotonia-desktop/src-tauri/target/release/bundle/appimage/*.AppImage
+            kotonia-desktop/src-tauri/target/release/bundle/appimage/*.AppImage.sig
             kotonia-desktop/src-tauri/target/release/bundle/msi/*.msi
+            kotonia-desktop/src-tauri/target/release/bundle/msi/*.msi.sig
             kotonia-desktop/src-tauri/target/release/bundle/nsis/*.exe
+            kotonia-desktop/src-tauri/target/release/bundle/nsis/*.exe.sig
             kotonia-desktop/src-tauri/target/release/bundle/macos/*.app.zip
+            kotonia-desktop/src-tauri/target/release/bundle/macos/*.app.tar.gz
+            kotonia-desktop/src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
           fail_on_unmatched_files: false
+
+  updater-manifest:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download updater artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: kotonia-desktop-*
+          path: dist/updater
+          merge-multiple: true
+
+      - name: Generate latest.json
+        run: |
+          bash .github/scripts/generate-updater-manifest.sh \
+            dist/updater \
+            "${{ github.repository }}" \
+            "${{ github.ref_name }}" \
+            latest.json
+          jq -e '
+            .version and
+            .platforms["linux-x86_64"].signature and
+            .platforms["darwin-aarch64"].signature and
+            .platforms["windows-x86_64"].signature
+          ' latest.json
+
+      - name: Publish updater manifest
+        uses: softprops/action-gh-release@v2
+        with:
+          files: latest.json
+          fail_on_unmatched_files: true

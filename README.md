@@ -115,6 +115,14 @@ cd src-tauri
 cargo tauri dev
 ```
 
+## Automatic updates
+
+Packaged builds check the latest GitHub Release at startup. When a newer
+version is available, the app asks before downloading it, verifies the Tauri
+updater signature, installs it, and restarts. Release CI stores the private
+signing key in the `TAURI_SIGNING_PRIVATE_KEY` GitHub Actions secret; only the
+public verification key is committed to `tauri.conf.json`.
+
 For live frontend compilation in a second terminal:
 
 ```sh
