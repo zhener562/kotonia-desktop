@@ -619,7 +619,7 @@ btnToggleVoice.addEventListener('click', () => setVoiceEnabled(!voiceEnabled));
 
 // ── Avatar (Ditto lip-sync) mode ─────────────────────────────────────
 // Enabling this routes the agent's spoken answer through
-// `/api/voice/ditto/tts/stream/avatar` instead of the plain TTS path,
+// `/api/v1/avatars/{avatar_id}/speech` instead of the plain TTS path,
 // so the floating Eve portrait animates in time with the audio. Voice
 // must also be ON for audio to actually play; we don't force-link the
 // two toggles (a user might want to see the avatar while muted, e.g.

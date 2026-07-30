@@ -16,9 +16,9 @@ pub struct Persona {
     pub avatar_url: &'static str,
     pub system_prompt: &'static str,
     pub voice: VoiceConfig,
-    /// Ditto avatar id used by `/api/voice/ditto/tts/stream/avatar`.
+    /// Ditto avatar id used by `/api/v1/avatars/{avatar_id}/speech`.
     /// On first launch the app POSTs the persona's still image to
-    /// `/api/voice/ditto/prepare` under this id; subsequent talk-mode
+    /// `/api/v1/avatars` under this id; subsequent talk-mode
     /// requests reference it. The id is operator-chosen (not server-
     /// assigned), so we pin it to the persona key for predictability.
     pub avatar_id: &'static str,
@@ -28,7 +28,7 @@ pub struct Persona {
     pub avatar_png: &'static [u8],
 }
 
-/// TTS request shape used by `/api/voice/qwen3/tts/stream`. Currently
+/// TTS request shape used by `/api/v1/audio/speech`. Currently
 /// Qwen3-TTS is the only supported engine for kotonia-desktop voice —
 /// it's the premium quality path on the kotonia.ai backend. Future
 /// fallback to Irodori / VoiceVox can be added by switching on

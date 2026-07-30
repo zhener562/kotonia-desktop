@@ -1,8 +1,8 @@
-//! STT: WebView mic capture → WAV → kotonia.ai `/api/voice/transcribe`
+//! STT: WebView mic capture → WAV → kotonia.ai `/api/v1/audio/transcriptions`
 //! → text dropped into the prompt textarea for the user to review.
 //!
 //! Why this is a one-shot (not streaming) call:
-//!   - Backend `/api/voice/transcribe` returns the full transcript in one
+//!   - Backend `/api/v1/audio/transcriptions` returns the full transcript in one
 //!     JSON body — there's no chunk streaming protocol for STT (unlike
 //!     TTS), so a single round-trip is all the server offers.
 //!   - For the "dictation into prompt input" UX we want the full text
@@ -38,7 +38,7 @@ pub async fn transcribe(wav_base64: String) -> Result<TranscribeResult, String> 
     }
 
     let server = cfg.server.trim_end_matches('/').to_string();
-    let url = format!("{server}/api/voice/transcribe");
+    let url = format!("{server}/api/v1/audio/transcriptions");
 
     let form = multipart::Form::new()
         .text("language", "ja")
@@ -78,10 +78,7 @@ pub async fn transcribe(wav_base64: String) -> Result<TranscribeResult, String> 
         return Err(format!("HTTP {status}: {}", detail.trim()));
     }
 
-    let json: serde_json::Value = res
-        .json()
-        .await
-        .map_err(|e| format!("parse: {e}"))?;
+    let json: serde_json::Value = res.json().await.map_err(|e| format!("parse: {e}"))?;
     let text = json
         .get("text")
         .and_then(|v| v.as_str())
