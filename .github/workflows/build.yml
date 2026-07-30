@@ -88,6 +88,20 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         run: cargo tauri build --bundles ${{ matrix.bundles }}
 
+      # Tauri creates updater signatures for AppImage, MSI, NSIS and macOS
+      # archives, but the deb package must be signed explicitly. The updater
+      # selects this artifact when the running binary came from a deb install.
+      - name: Sign Linux deb updater artifact
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: kotonia-desktop/src-tauri
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: |
+          for deb in target/release/bundle/deb/*.deb; do
+            cargo tauri signer sign "$deb"
+          done
+
       - name: Sign and zip macOS app
         if: matrix.os == 'macos-latest'
         run: |
@@ -115,6 +129,7 @@ jobs:
         with:
           files: |
             kotonia-desktop/src-tauri/target/release/bundle/deb/*.deb
+            kotonia-desktop/src-tauri/target/release/bundle/deb/*.deb.sig
             kotonia-desktop/src-tauri/target/release/bundle/appimage/*.AppImage
             kotonia-desktop/src-tauri/target/release/bundle/appimage/*.AppImage.sig
             kotonia-desktop/src-tauri/target/release/bundle/msi/*.msi
@@ -150,9 +165,11 @@ jobs:
             latest.json
           jq -e '
             .version and
-            .platforms["linux-x86_64"].signature and
-            .platforms["darwin-aarch64"].signature and
-            .platforms["windows-x86_64"].signature
+            .platforms["linux-x86_64-deb"].signature and
+            .platforms["linux-x86_64-appimage"].signature and
+            .platforms["darwin-aarch64-app"].signature and
+            .platforms["windows-x86_64-msi"].signature and
+            .platforms["windows-x86_64-nsis"].signature
           ' latest.json
 
       - name: Publish updater manifest

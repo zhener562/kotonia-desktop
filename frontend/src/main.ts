@@ -111,6 +111,7 @@ let sessionWorkspace = null;
 interface UpdateInfo {
   version: string;
   current_version: string;
+  install_blocker: string | null;
 }
 
 async function checkForUpdate() {
@@ -129,6 +130,12 @@ async function checkForUpdate() {
     'info',
     `Kotonia Desktop ${update.version} を利用できます（現在 ${update.current_version}）。`,
   );
+  if (update.install_blocker) {
+    appendLog('error', `更新の準備が必要です: ${update.install_blocker}`);
+    window.alert(update.install_blocker);
+    return;
+  }
+
   const accepted = window.confirm(
     `Kotonia Desktop ${update.version} に更新しますか？\n\n` +
       '署名を検証してインストールした後、アプリを再起動します。',
