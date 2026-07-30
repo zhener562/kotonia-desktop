@@ -39,12 +39,14 @@ pub struct AppState {
     pub sessions: Arc<SessionRegistry>,
     pub pending_approvals: PendingApprovals,
     pub running_tasks: RunningTasks,
-    /// Set when the server has told us our paired device_token is no
-    /// longer valid (e.g. the startup avatar registration got a 403).
-    /// `auth_status` folds this into `logged_in` so the UI can tell
-    /// "file on disk exists" apart from "server still honors it" —
-    /// without polling the server on a timer for it (see commands.rs).
+    /// Last authoritative server result for the paired device token.
+    /// Transient network failures leave this unchanged so an offline user
+    /// is not incorrectly shown as logged out.
     pub auth_invalid: std::sync::atomic::AtomicBool,
+    /// Ditto avatar preparation is deferred until avatar speech is actually
+    /// requested. The mutex prevents concurrent first-use calls from racing
+    /// to register the same bundled avatar.
+    pub avatar_ready: AsyncMutex<bool>,
 }
 
 impl AppState {
@@ -54,6 +56,7 @@ impl AppState {
             pending_approvals: Arc::new(StdMutex::new(HashMap::new())),
             running_tasks: Arc::new(StdMutex::new(HashMap::new())),
             auth_invalid: std::sync::atomic::AtomicBool::new(false),
+            avatar_ready: AsyncMutex::new(false),
         }
     }
 }

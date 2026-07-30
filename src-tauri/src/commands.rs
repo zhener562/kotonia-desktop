@@ -101,24 +101,86 @@ pub fn persona_info() -> serde_json::Value {
     })
 }
 
-/// `logged_in` reflects "do we have a pairing *the server still honors*",
-/// not just "does the config file exist on disk" — otherwise an expired
-/// device_token leaves the UI stuck showing green with no way to get back
-/// to the login button. We don't poll the server on a timer to check this
-/// (no periodic background network calls); instead `state.auth_invalid`
-/// is set reactively, from the *existing* startup avatar-registration
-/// request's response, the first time the server actually rejects it.
-#[tauri::command]
-pub fn auth_status(state: State<'_, AppState>) -> AuthStatus {
-    let cfg = kotonia_cli::config::load();
-    let invalid = state.auth_invalid.load(std::sync::atomic::Ordering::Relaxed);
-    AuthStatus {
-        logged_in: cfg.is_some() && !invalid,
-        server: cfg.as_ref().map(|c| c.server.clone()),
-        device_id_prefix: cfg
-            .as_ref()
-            .map(|c| c.device_id.chars().take(8).collect::<String>()),
+#[derive(Debug, PartialEq, Eq)]
+enum DeviceAuthValidation {
+    Valid,
+    Invalid,
+    Unavailable,
+}
+
+fn classify_device_auth_status(status: reqwest::StatusCode) -> DeviceAuthValidation {
+    if status.is_success() {
+        DeviceAuthValidation::Valid
+    } else if matches!(
+        status,
+        reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
+    ) {
+        DeviceAuthValidation::Invalid
+    } else {
+        DeviceAuthValidation::Unavailable
     }
+}
+
+async fn validate_device_auth(
+    cfg: &kotonia_cli::config::DaemonStoredConfig,
+) -> DeviceAuthValidation {
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+    else {
+        return DeviceAuthValidation::Unavailable;
+    };
+    let url = format!(
+        "{}/api/agent-runtime/auth-status/{}",
+        cfg.server.trim_end_matches('/'),
+        cfg.device_id
+    );
+    match client
+        .get(url)
+        .bearer_auth(&cfg.device_token)
+        .send()
+        .await
+    {
+        Ok(response) => classify_device_auth_status(response.status()),
+        Err(error) => {
+            eprintln!("[auth] validation unavailable: {error}");
+            DeviceAuthValidation::Unavailable
+        }
+    }
+}
+
+/// Validate the stored device token against the dedicated, non-rotating
+/// server endpoint. A definitive 401/403 updates the login UI immediately;
+/// transient network/server failures preserve the last known state so
+/// starting Desktop offline does not look like a logout.
+#[tauri::command]
+pub async fn auth_status(state: State<'_, AppState>) -> Result<AuthStatus, String> {
+    let Some(cfg) = kotonia_cli::config::load() else {
+        state
+            .auth_invalid
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        return Ok(AuthStatus {
+            logged_in: false,
+            server: None,
+            device_id_prefix: None,
+        });
+    };
+
+    match validate_device_auth(&cfg).await {
+        DeviceAuthValidation::Valid => state
+            .auth_invalid
+            .store(false, std::sync::atomic::Ordering::Relaxed),
+        DeviceAuthValidation::Invalid => state
+            .auth_invalid
+            .store(true, std::sync::atomic::Ordering::Relaxed),
+        DeviceAuthValidation::Unavailable => {}
+    }
+    let invalid = state.auth_invalid.load(std::sync::atomic::Ordering::Relaxed);
+    Ok(AuthStatus {
+        logged_in: !invalid,
+        server: Some(cfg.server),
+        device_id_prefix: Some(cfg.device_id.chars().take(8).collect()),
+    })
 }
 
 fn login_server() -> String {
@@ -690,4 +752,30 @@ async fn get_or_create_session(
     }
     map.insert(session_id.to_string(), session.clone());
     Ok(session)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{classify_device_auth_status, DeviceAuthValidation};
+    use reqwest::StatusCode;
+
+    #[test]
+    fn device_auth_status_distinguishes_rejection_from_outage() {
+        assert_eq!(
+            classify_device_auth_status(StatusCode::OK),
+            DeviceAuthValidation::Valid
+        );
+        assert_eq!(
+            classify_device_auth_status(StatusCode::UNAUTHORIZED),
+            DeviceAuthValidation::Invalid
+        );
+        assert_eq!(
+            classify_device_auth_status(StatusCode::FORBIDDEN),
+            DeviceAuthValidation::Invalid
+        );
+        assert_eq!(
+            classify_device_auth_status(StatusCode::INTERNAL_SERVER_ERROR),
+            DeviceAuthValidation::Unavailable
+        );
+    }
 }

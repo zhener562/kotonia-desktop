@@ -73,43 +73,6 @@ fn main() {
         .setup(|app| {
             #[cfg(target_os = "linux")]
             allow_webkit_media_permissions(app);
-            // One-shot Eve avatar registration with the Ditto server,
-            // backgrounded so it doesn't block app startup. Idempotent
-            // on the server (re-POST of an existing id is a no-op), so
-            // the worst case is a wasted request if the user hits a
-            // first-launch flow twice. Failures are logged but do not
-            // abort the app — the TTS-only path still works without a
-            // registered avatar.
-            let app_handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                let persona = &persona::EVE;
-                if ditto::is_avatar_registered(persona).await {
-                    eprintln!("[ditto] avatar `{}` already registered", persona.avatar_id);
-                    return;
-                }
-                eprintln!("[ditto] registering avatar `{}`...", persona.avatar_id);
-                match ditto::register_avatar(persona).await {
-                    Ok(()) => eprintln!("[ditto] avatar registered"),
-                    Err(e) => {
-                        eprintln!("[ditto] avatar registration failed: {e}");
-                        // 403 from our own backend's cookie-or-bearer middleware
-                        // means the paired device_token is dead (expired/revoked)
-                        // — not just "this feature is unreachable". Surface that
-                        // as "you need to log in again", since `auth_status`'s
-                        // disk-file check alone can't tell the two apart.
-                        if e.starts_with("HTTP 403") {
-                            use tauri::Manager;
-                            app_handle
-                                .state::<AppState>()
-                                .auth_invalid
-                                .store(true, std::sync::atomic::Ordering::Relaxed);
-                        }
-                        use tauri::Emitter;
-                        let _ = app_handle
-                            .emit("ditto_register_error", serde_json::json!({ "message": e }));
-                    }
-                }
-            });
             Ok(())
         })
         .run(tauri::generate_context!())
