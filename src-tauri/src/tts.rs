@@ -1,7 +1,7 @@
 //! TTS streaming: agent text → Eve's voice in the WebView.
 //!
 //! Why route through Rust:
-//!   - The kotonia.ai `/api/voice/*` endpoints want a Bearer
+//!   - The kotonia.ai `/api/v1/audio/speech` endpoint wants a Bearer
 //!     `device_token` (after the auth.rs change that added device_token
 //!     to `validate_session`), which we keep server-side in Rust so
 //!     the WebView never holds the credential.
@@ -72,21 +72,18 @@ pub async fn run_stream(
     };
 
     let server = cfg.server.trim_end_matches('/').to_string();
-    let url = match voice.engine {
-        "qwen3" => format!("{server}/api/voice/qwen3/tts/stream"),
-        "irodori" => format!("{server}/api/voice/irodori/tts/stream"),
-        "voicevox" => format!("{server}/api/voice/voicevox/tts/stream"),
-        other => {
-            let _ = app.emit(
-                "tts_error",
-                TtsErrorPayload {
-                    stream_id,
-                    message: format!("unsupported TTS engine: {other}"),
-                },
-            );
-            return;
-        }
-    };
+    let url = format!("{server}/api/v1/audio/speech");
+    if !matches!(voice.engine, "qwen3" | "irodori" | "voicevox") {
+        let other = voice.engine;
+        let _ = app.emit(
+            "tts_error",
+            TtsErrorPayload {
+                stream_id,
+                message: format!("unsupported TTS engine: {other}"),
+            },
+        );
+        return;
+    }
 
     // Per-turn `{{VOICE: ...}}` acting direction (Qwen3 only), merged
     // behind the persona's base register. `None` → server default.
@@ -94,9 +91,10 @@ pub async fn run_stream(
 
     let body = match voice.engine {
         "qwen3" => serde_json::json!({
-            "text": text,
+            "input": text,
+            "engine": voice.engine,
             "language": voice.language,
-            "speaker": voice.speaker,
+            "voice": voice.speaker,
             "speed": voice.speed,
             // Serializes to null when there's no direction; the backend
             // proxy's Option<String> maps null → server default instruct.
@@ -112,13 +110,15 @@ pub async fn run_stream(
             // stores them as a string for uniformity, so parse here.
             let speaker_id: i64 = voice.speaker.parse().unwrap_or(1);
             serde_json::json!({
-                "text": text,
-                "speaker": speaker_id,
+                "input": text,
+                "engine": voice.engine,
+                "voice": speaker_id.to_string(),
                 "speed": voice.speed,
             })
         }
         "irodori" => serde_json::json!({
-            "text": text,
+            "input": text,
+            "engine": voice.engine,
             "speed": voice.speed,
             "num_steps": 20,
         }),

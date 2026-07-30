@@ -1,15 +1,14 @@
 //! Ditto lip-sync streaming: agent text → audio + JPEG frame stream
 //! that animates Eve's face in time with the spoken response.
 //!
-//! Endpoint: `/api/voice/ditto/tts/stream/avatar` (cookie- or
-//! device_token-authed; the device_token path was enabled in the
-//! auth.rs change from the persona-foundation commit `e0c7edc`).
+//! Endpoint: `/api/v1/avatars/{avatar_id}/speech` (bearer-authenticated
+//! with the device token managed by kotonia-cli).
 //!
 //! Wire format (one stream of length-prefixed tagged chunks):
 //!
 //!   [u8 type][u32 BE length][payload bytes]   …repeat
 //!
-//! - type=0 → audio WAV chunk (same shape as `/qwen3/tts/stream`)
+//! - type=0 → audio WAV chunk (same shape as `/api/v1/audio/speech`)
 //! - type=1 → JPEG video frame at the negotiated fps (default 25)
 //!
 //! The audio chunks should be **buffered until the first frame
@@ -52,15 +51,12 @@ struct StreamErrorPayload {
 
 /// True if `eve` (or whatever the persona's `avatar_id` is) is
 /// already registered with the Ditto server. Used by the startup
-/// hook so we only POST `/ditto/prepare` once per device per persona.
+/// hook so we only POST `/api/v1/avatars` once per device per persona.
 pub async fn is_avatar_registered(persona: &Persona) -> bool {
     let Some(cfg) = kotonia_cli::config::load() else {
         return false;
     };
-    let url = format!(
-        "{}/api/voice/ditto/avatars",
-        cfg.server.trim_end_matches('/')
-    );
+    let url = format!("{}/api/v1/avatars", cfg.server.trim_end_matches('/'));
     let Ok(client) = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
@@ -103,12 +99,11 @@ pub async fn is_avatar_registered(persona: &Persona) -> bool {
 }
 
 /// One-shot registration: upload the persona's bundled image to
-/// `/api/voice/ditto/prepare` so the Ditto server caches its facial
+/// `/api/v1/avatars` so the Ditto server caches its facial
 /// reference under `persona.avatar_id`. Idempotent on the server
 /// side — re-registering an existing id is a no-op.
 pub async fn register_avatar(persona: &'static Persona) -> Result<(), String> {
-    let cfg = kotonia_cli::config::load()
-        .ok_or_else(|| "not logged in".to_string())?;
+    let cfg = kotonia_cli::config::load().ok_or_else(|| "not logged in".to_string())?;
 
     let form = reqwest::multipart::Form::new()
         .text("avatar_id", persona.avatar_id)
@@ -125,10 +120,7 @@ pub async fn register_avatar(persona: &'static Persona) -> Result<(), String> {
         .build()
         .map_err(|e| e.to_string())?;
 
-    let url = format!(
-        "{}/api/voice/ditto/prepare",
-        cfg.server.trim_end_matches('/')
-    );
+    let url = format!("{}/api/v1/avatars", cfg.server.trim_end_matches('/'));
     let res = client
         .post(&url)
         .header(
@@ -212,8 +204,9 @@ pub async fn run_stream(
     };
 
     let url = format!(
-        "{}/api/voice/ditto/tts/stream/avatar",
-        cfg.server.trim_end_matches('/')
+        "{}/api/v1/avatars/{}/speech",
+        cfg.server.trim_end_matches('/'),
+        persona.avatar_id
     );
 
     let res = match client
