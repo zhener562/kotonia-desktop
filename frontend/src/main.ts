@@ -60,8 +60,8 @@ const authStatusEl = element<HTMLDivElement>('auth-status');
 const sessionLabelEl = element<HTMLSpanElement>('session-label');
 const btnNewSession = element<HTMLButtonElement>('btn-new-session');
 const btnClearLog = element<HTMLButtonElement>('btn-clear-log');
-const btnToggleVoice = element<HTMLButtonElement>('btn-toggle-voice');
-const btnToggleAvatar = element<HTMLButtonElement>('btn-toggle-avatar');
+const outputModeSelect = element<HTMLSelectElement>('output-mode');
+const btnProfile = element<HTMLButtonElement>('btn-profile');
 const btnMic = element<HTMLButtonElement>('btn-mic');
 const avatarFloating = element<HTMLDivElement>('avatar-floating');
 const avatarFrame = element<HTMLImageElement>('avatar-frame');
@@ -90,6 +90,16 @@ const previewErrorMsg = element<HTMLPreElement>('preview-error-msg');
 const engineSelect = element<HTMLSelectElement>('engine-select');
 const btnWorkspace = element<HTMLButtonElement>('btn-workspace');
 const workspacePathEl = element<HTMLSpanElement>('workspace-path');
+const profileModal = element<HTMLDivElement>('profile-modal');
+const profileForm = element<HTMLFormElement>('profile-form');
+const profileNameInput = element<HTMLInputElement>('profile-name');
+const profileTaglineInput = element<HTMLInputElement>('profile-tagline');
+const profileSystemPromptInput = element<HTMLTextAreaElement>('profile-system-prompt');
+const profilePersonaInput = element<HTMLTextAreaElement>('profile-persona');
+const profileImagePreview = element<HTMLImageElement>('profile-image-preview');
+const profileImagePathEl = element<HTMLParagraphElement>('profile-image-path');
+const profilePickImage = element<HTMLButtonElement>('profile-pick-image');
+const profileCancel = element<HTMLButtonElement>('profile-cancel');
 
 let sessionId = null;
 let pendingApprovalId = null;
@@ -148,6 +158,81 @@ async function checkForUpdate() {
   } catch (e) {
     appendLog('error', `自動更新に失敗しました: ${String(e)}`);
   }
+}
+
+const PROFILE_LS_KEY = 'kotonia_desktop_profile_v1';
+const DEFAULT_PROFILE = {
+  name: 'Eve',
+  tagline: 'observant android AGI · kotonia desktop',
+  systemPrompt: '',
+  persona: '',
+  avatarPath: '',
+};
+let profile = (() => {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PROFILE_LS_KEY) || '{}');
+    return { ...DEFAULT_PROFILE, ...saved };
+  } catch {
+    return { ...DEFAULT_PROFILE };
+  }
+})();
+let draftAvatarPath = profile.avatarPath;
+
+function profileAvatarSrc() {
+  return profile.avatarPath ? convertFileSrc(profile.avatarPath) : 'persona/eve.png';
+}
+
+function applyProfile() {
+  const avatar = document.getElementById('persona-avatar') as HTMLImageElement | null;
+  const name = document.getElementById('persona-name');
+  const tagline = document.getElementById('persona-tagline');
+  const src = profileAvatarSrc();
+  if (avatar) {
+    avatar.src = src;
+    avatar.alt = profile.name;
+  }
+  if (name) name.textContent = profile.name;
+  if (tagline) tagline.textContent = profile.tagline;
+  document.title = `${profile.name || 'Kotonia'} · kotonia`;
+  profileImagePreview.src = src;
+  profileImagePathEl.textContent = profile.avatarPath || 'Eve の既定画像';
+  setAvatarFrameSrc(src, false);
+}
+
+function openProfileEditor() {
+  draftAvatarPath = profile.avatarPath;
+  profileNameInput.value = profile.name;
+  profileTaglineInput.value = profile.tagline;
+  profileSystemPromptInput.value = profile.systemPrompt;
+  profilePersonaInput.value = profile.persona;
+  profileImagePreview.src = profileAvatarSrc();
+  profileImagePathEl.textContent = profile.avatarPath || 'Eve の既定画像';
+  profileModal.classList.remove('hidden');
+}
+
+async function pickProfileImage() {
+  const dialog = window.__TAURI__?.dialog;
+  if (!dialog) return;
+  const picked = await dialog.open({
+    directory: false,
+    multiple: false,
+    title: 'プロフィールの顔画像を選択',
+    filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
+  });
+  if (!picked) return;
+  draftAvatarPath = picked;
+  profileImagePreview.src = convertFileSrc(picked);
+  profileImagePathEl.textContent = picked;
+}
+
+function avatarIdForProfile() {
+  if (!profile.avatarPath) return 'eve';
+  let hash = 2166136261;
+  for (const char of profile.avatarPath) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `desktop-profile-${(hash >>> 0).toString(16)}`;
 }
 
 // Workspace persisted across launches. `null` = use Rust's default
@@ -354,24 +439,7 @@ function renderEngineWarning() {
 }
 
 async function loadPersona() {
-  try {
-    const info = await invoke('persona_info');
-    const avatar = document.getElementById('persona-avatar') as HTMLImageElement | null;
-    const name = document.getElementById('persona-name');
-    const tagline = document.getElementById('persona-tagline');
-    if (avatar && info.avatar_url) {
-      avatar.src = info.avatar_url;
-      avatar.alt = info.display_name ?? '';
-    }
-    if (name) name.textContent = info.display_name ?? '';
-    if (tagline) tagline.textContent = info.tagline ?? '';
-    if (info.display_name) {
-      document.title = info.display_name + ' · kotonia';
-    }
-  } catch (e) {
-    // Persona is decorative — don't block startup if the call fails.
-    console.error('persona_info failed', e);
-  }
+  applyProfile();
 }
 
 async function refreshAuth() {
@@ -529,6 +597,8 @@ async function submitTask() {
       model: null,
       engine,
       workspacePath,
+      systemPrompt: profile.systemPrompt,
+      persona: profile.persona,
     });
     appendLog(
       'task-submit',
@@ -619,6 +689,32 @@ btnClearLog.addEventListener('click', () => {
 
 engineSelect.addEventListener('change', renderEngineWarning);
 btnWorkspace.addEventListener('click', pickWorkspace);
+btnProfile.addEventListener('click', openProfileEditor);
+profileCancel.addEventListener('click', () => profileModal.classList.add('hidden'));
+profilePickImage.addEventListener('click', () => {
+  pickProfileImage().catch((e) => appendLog('error', 'profile image: ' + String(e)));
+});
+profileForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const previousPrompt = `${profile.systemPrompt}\n${profile.persona}`;
+  profile = {
+    name: profileNameInput.value.trim() || 'Kotonia',
+    tagline: profileTaglineInput.value.trim(),
+    systemPrompt: profileSystemPromptInput.value.trim(),
+    persona: profilePersonaInput.value.trim(),
+    avatarPath: draftAvatarPath,
+  };
+  try { localStorage.setItem(PROFILE_LS_KEY, JSON.stringify(profile)); } catch {}
+  profileModal.classList.add('hidden');
+  applyProfile();
+  if (sessionId && previousPrompt !== `${profile.systemPrompt}\n${profile.persona}`) {
+    sessionId = null;
+    sessionEngine = null;
+    sessionWorkspace = null;
+    setSessionLabel();
+    appendLog('session-new', 'profile prompt changed → starting a new session.');
+  }
+});
 
 // ── TTS playback (Eve voice) ─────────────────────────────────────────
 // Toggle is OFF by default — autoplay policies in WebKit refuse to
@@ -632,8 +728,6 @@ let ttsActiveStreamId = null;
 
 function setVoiceEnabled(enabled) {
   voiceEnabled = enabled;
-  btnToggleVoice.setAttribute('aria-pressed', enabled ? 'true' : 'false');
-  btnToggleVoice.textContent = enabled ? '🔊 voice' : '🔇 voice';
   if (enabled) {
     // Lazily create the AudioContext inside the user gesture so
     // browsers don't block it. Resume if it was suspended after a
@@ -659,8 +753,6 @@ function setVoiceEnabled(enabled) {
   }
 }
 
-btnToggleVoice.addEventListener('click', () => setVoiceEnabled(!voiceEnabled));
-
 // ── Avatar (Ditto lip-sync) mode ─────────────────────────────────────
 // Enabling this routes the agent's spoken answer through
 // `/api/v1/avatars/{avatar_id}/speech` instead of the plain TTS path,
@@ -670,24 +762,22 @@ btnToggleVoice.addEventListener('click', () => setVoiceEnabled(!voiceEnabled));
 // for a screen capture).
 
 let avatarEnabled = false;
-const STATIC_AVATAR_SRC = 'persona/eve.png';
 let activeFrameUrl = null;
 let prevFrameUrl = null;
 
 function setAvatarEnabled(enabled) {
   avatarEnabled = enabled;
-  btnToggleAvatar.setAttribute('aria-pressed', enabled ? 'true' : 'false');
   if (enabled) {
     avatarFloating.classList.remove('hidden');
     avatarFloating.setAttribute('aria-hidden', 'false');
     // Reset to the bundled still image when re-shown so the user
     // doesn't see the last (frozen) frame from a previous talk.
-    setAvatarFrameSrc(STATIC_AVATAR_SRC, /*isBlob*/ false);
+    setAvatarFrameSrc(profileAvatarSrc(), /*isBlob*/ false);
   } else {
     avatarFloating.classList.add('hidden');
     avatarFloating.classList.remove('speaking');
     avatarFloating.setAttribute('aria-hidden', 'true');
-    setAvatarFrameSrc(STATIC_AVATAR_SRC, /*isBlob*/ false);
+    setAvatarFrameSrc(profileAvatarSrc(), /*isBlob*/ false);
   }
 }
 
@@ -704,7 +794,17 @@ function setAvatarFrameSrc(src, isBlob) {
   avatarFrame.src = src;
 }
 
-btnToggleAvatar.addEventListener('click', () => setAvatarEnabled(!avatarEnabled));
+const OUTPUT_MODE_LS_KEY = 'kotonia_desktop_output_mode';
+
+function setOutputMode(mode) {
+  const normalized = mode === 'voice' || mode === 'avatar' ? mode : 'text';
+  outputModeSelect.value = normalized;
+  setVoiceEnabled(normalized !== 'text');
+  setAvatarEnabled(normalized === 'avatar');
+  try { localStorage.setItem(OUTPUT_MODE_LS_KEY, normalized); } catch {}
+}
+
+outputModeSelect.addEventListener('change', () => setOutputMode(outputModeSelect.value));
 
 // ── Draggable + resizable avatar (aspect-ratio locked) ───────────────
 // Stored under `kotonia_avatar_layout` in localStorage so the next
@@ -1051,10 +1151,15 @@ async function speakPersona(text) {
   dittoFrameIndex = 0;
   try {
     const command = avatarEnabled ? 'ditto_speak' : 'tts_speak';
-    const streamId = await invoke(command, {
-      text: speakable,
-      instruct: direction || undefined,
-    });
+    const args = avatarEnabled
+      ? {
+          text: speakable,
+          instruct: direction || undefined,
+          avatarId: avatarIdForProfile(),
+          avatarPath: profile.avatarPath || null,
+        }
+      : { text: speakable, instruct: direction || undefined };
+    const streamId = await invoke(command, args);
     ttsActiveStreamId = streamId;
     // Reset the playback head so the new utterance starts immediately
     // rather than queueing behind a previous (stale) stream that had
@@ -1161,7 +1266,7 @@ listen('tts_done', (msg) => {
     // before the previous audio finished draining.
     if (ttsActiveStreamId !== closingStreamId) return;
     avatarFloating.classList.remove('speaking');
-    setAvatarFrameSrc(STATIC_AVATAR_SRC, /*isBlob*/ false);
+    setAvatarFrameSrc(profileAvatarSrc(), /*isBlob*/ false);
   }, remainingMs + tailMs);
 });
 
@@ -1619,6 +1724,16 @@ listen('approval_request', (msg) => {
 
 // Boot.
 loadPersona();
+let initialOutputMode = 'text';
+try {
+  initialOutputMode = localStorage.getItem(OUTPUT_MODE_LS_KEY) || 'text';
+} catch {}
+setOutputMode(initialOutputMode);
+window.addEventListener('pointerdown', () => {
+  if (voiceEnabled && ttsAudioCtx?.state === 'suspended') {
+    ttsAudioCtx.resume().catch(() => {});
+  }
+});
 refreshAuth();
 setInterval(refreshAuth, 60_000);
 setSessionLabel();

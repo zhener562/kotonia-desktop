@@ -46,6 +46,13 @@ cargo tauri dev   # TypeScript frontend is compiled automatically
 - session history persisted to `~/.kotonia/sessions/<id>.jsonl`
   (auto-resumed on session id reuse)
 - multi-turn within one session id; `新規` button starts a fresh session
+- **Editable profile** from the header: display name, tagline, additional
+  system prompt, personality/speaking style, and a local PNG/JPEG/WebP face.
+  Settings persist locally; prompt changes start a fresh agent session. A
+  custom face is registered with Ditto on first Avatar response, so it is used
+  for both the still portrait and lip-sync stream.
+- **Text / Voice / Avatar output modes** in one selector. Voice is audio-only;
+  Avatar adds the movable lip-sync portrait. The choice persists across runs.
 - **Ctrl+click (macOS は Cmd+click) で path を OS の既定アプリで開く**:
   observation / final-answer / bash 行のテキストを path-shaped token で
   scan して clickable span にする。`/`, `~/`, `./`, `../` で始まるトークン
@@ -62,9 +69,8 @@ cargo tauri dev   # TypeScript frontend is compiled automatically
   ↗ で OS の既定アプリへ、× で閉じる。トップバーの `▶ プレビュー` トグル
   で同じ HTML を再表示できる (初めて HTML を見たあとに出現)。
 
-Not yet shipped: workspace directory picker, model selector,
-`/chat/personas` style character UI, voice / Ditto, kotonia.ai webview
-(T1 milestones).
+Not yet shipped: model selector, the hosted `/chat/personas` catalog,
+kotonia.ai webview, and session GC.
 
 ## Prerequisites
 
@@ -192,11 +198,9 @@ on disk.
 
 ## Known limits / future work
 
-- Workspace is hardcoded to `~/.kotonia/desktop/workspace/`. T1 = picker.
 - Model is hardcoded to `kotonia-llm-basic`. T1 = selector.
-- No "character chat" UI surface yet; this is the bare ReAct console. T1
-  embeds the existing `/chat/studio` web UI in a second webview, sharing
-  the kotonia.ai session cookie for full persona/voice access.
+- The local Profile editor configures one active character. Browsing and
+  importing the hosted persona catalog is still future work.
 - No session GC; abandoned sessions accumulate in
   `~/.kotonia/sessions/*.jsonl`. Mirror the daemon's 30 min idle GC in T1.
 - macOS / Windows code signing not wired. Linux runs fine unsigned.
