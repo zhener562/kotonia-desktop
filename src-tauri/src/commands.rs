@@ -76,7 +76,10 @@ fn resolve_workspace(workspace_path: Option<&str>) -> Result<PathBuf, String> {
     let canonical = fs_canonicalize(&candidate)
         .map_err(|e| format!("workspace not accessible: {expanded} ({e})"))?;
     if !canonical.is_dir() {
-        return Err(format!("workspace is not a directory: {}", canonical.display()));
+        return Err(format!(
+            "workspace is not a directory: {}",
+            canonical.display()
+        ));
     }
     Ok(canonical)
 }
@@ -135,12 +138,7 @@ async fn validate_device_auth(
         cfg.server.trim_end_matches('/'),
         cfg.device_id
     );
-    match client
-        .get(url)
-        .bearer_auth(&cfg.device_token)
-        .send()
-        .await
-    {
+    match client.get(url).bearer_auth(&cfg.device_token).send().await {
         Ok(response) => classify_device_auth_status(response.status()),
         Err(error) => {
             eprintln!("[auth] validation unavailable: {error}");
@@ -175,7 +173,9 @@ pub async fn auth_status(state: State<'_, AppState>) -> Result<AuthStatus, Strin
             .store(true, std::sync::atomic::Ordering::Relaxed),
         DeviceAuthValidation::Unavailable => {}
     }
-    let invalid = state.auth_invalid.load(std::sync::atomic::Ordering::Relaxed);
+    let invalid = state
+        .auth_invalid
+        .load(std::sync::atomic::Ordering::Relaxed);
     Ok(AuthStatus {
         logged_in: !invalid,
         server: Some(cfg.server),
@@ -276,19 +276,21 @@ pub async fn submit_task(
     model: Option<String>,
     engine: Option<String>,
     workspace_path: Option<String>,
+    system_prompt: Option<String>,
+    persona: Option<String>,
 ) -> Result<SubmitTaskResponse, String> {
     let choice = resolve_engine(engine.as_deref(), model.as_deref())?;
 
     // The hosted ReAct path needs a paired device_token. Claude Code runs
     // entirely against the local `claude` binary, so the kotonia.ai login
     // gate doesn't apply.
-    let auth_invalid = state.auth_invalid.load(std::sync::atomic::Ordering::Relaxed);
+    let auth_invalid = state
+        .auth_invalid
+        .load(std::sync::atomic::Ordering::Relaxed);
     if matches!(choice, EngineChoice::ReAct)
         && (kotonia_cli::config::load().is_none() || auth_invalid)
     {
-        return Err(
-            "not logged in. Use the login button in the header.".to_string(),
-        );
+        return Err("not logged in. Use the login button in the header.".to_string());
     }
 
     let workspace_root = resolve_workspace(workspace_path.as_deref())?;
@@ -298,6 +300,7 @@ pub async fn submit_task(
         model.as_deref(),
         choice,
         workspace_root,
+        combine_profile_prompt(system_prompt.as_deref(), persona.as_deref()),
     )
     .await?;
     let task_id = uuid::Uuid::new_v4().to_string();
@@ -318,7 +321,10 @@ pub async fn submit_task(
         };
 
         let mut guard = session.lock().await;
-        let result = guard.agent.run_turn(&prompt, &mut approval, &mut sink).await;
+        let result = guard
+            .agent
+            .run_turn(&prompt, &mut approval, &mut sink)
+            .await;
 
         if let Err(e) = result {
             let _ = app_for_spawn.emit(
@@ -357,11 +363,40 @@ pub async fn submit_task(
     })
 }
 
+fn combine_profile_prompt(system_prompt: Option<&str>, persona: Option<&str>) -> Option<String> {
+    let blocks = [system_prompt, persona]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    if blocks.is_empty() {
+        None
+    } else {
+        Some(blocks.join("\n\n"))
+    }
+}
+
+#[cfg(test)]
+mod profile_tests {
+    use super::combine_profile_prompt;
+
+    #[test]
+    fn profile_prompt_joins_non_empty_blocks() {
+        assert_eq!(
+            combine_profile_prompt(Some("  system  "), Some("persona")),
+            Some("system\n\npersona".to_string())
+        );
+    }
+
+    #[test]
+    fn empty_profile_uses_the_default() {
+        assert_eq!(combine_profile_prompt(Some("  "), None), None);
+    }
+}
+
 #[tauri::command]
-pub async fn cancel_task(
-    state: State<'_, AppState>,
-    task_id: String,
-) -> Result<bool, String> {
+pub async fn cancel_task(state: State<'_, AppState>, task_id: String) -> Result<bool, String> {
     let removed = state.running_tasks.lock().unwrap().remove(&task_id);
     match removed {
         Some(handle) => {
@@ -411,6 +446,8 @@ pub async fn ditto_speak(
     app: AppHandle,
     text: String,
     instruct: Option<String>,
+    avatar_id: Option<String>,
+    avatar_path: Option<String>,
 ) -> Result<String, String> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -418,6 +455,17 @@ pub async fn ditto_speak(
     }
     let stream_id = uuid::Uuid::new_v4().to_string();
     let text_owned = trimmed.to_string();
+    let resolved_avatar_id = avatar_id
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| crate::persona::EVE.avatar_id.to_string());
+    if let Some(image_path) = avatar_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        crate::ditto::register_avatar_file(&resolved_avatar_id, image_path).await?;
+    }
     let stream_for_task = stream_id.clone();
     let app_for_task = app.clone();
     tokio::spawn(async move {
@@ -426,7 +474,8 @@ pub async fn ditto_speak(
             stream_for_task,
             text_owned,
             instruct,
-            &crate::persona::EVE,
+            resolved_avatar_id,
+            &crate::persona::EVE.voice,
         )
         .await;
     });
@@ -471,7 +520,10 @@ pub async fn tts_speak(
 pub async fn open_login_help(app: AppHandle, url: Option<String>) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
     app.opener()
-        .open_url(url.as_deref().unwrap_or("https://kotonia.ai/agent/pair"), None::<&str>)
+        .open_url(
+            url.as_deref().unwrap_or("https://kotonia.ai/agent/pair"),
+            None::<&str>,
+        )
         .map_err(|e| e.to_string())
 }
 
@@ -550,7 +602,9 @@ use std::fs::canonicalize as fs_canonicalize;
 /// the identity.
 #[cfg(windows)]
 fn translate_unix_drive_path(path: &str) -> String {
-    let rest = path.strip_prefix("/mnt/").or_else(|| path.strip_prefix('/'));
+    let rest = path
+        .strip_prefix("/mnt/")
+        .or_else(|| path.strip_prefix('/'));
     if let Some(rest) = rest {
         let (drive, tail) = rest.split_once('/').unwrap_or((rest, ""));
         if drive.len() == 1 && drive.as_bytes()[0].is_ascii_alphabetic() {
@@ -605,12 +659,8 @@ pub async fn resolve_preview_path(
 
     // 2. Canonicalize (resolves `.`, `..`, symlinks). If the file is
     //    missing, this fails with a clear OS error.
-    let canonical = fs_canonicalize(&absolute).map_err(|e| {
-        format!(
-            "ファイルが見つかりません: {} ({e})",
-            absolute.display()
-        )
-    })?;
+    let canonical = fs_canonicalize(&absolute)
+        .map_err(|e| format!("ファイルが見つかりません: {} ({e})", absolute.display()))?;
 
     // 3. Must be a regular file (no dir / device).
     let meta = std::fs::metadata(&canonical).map_err(|e| e.to_string())?;
@@ -658,10 +708,7 @@ pub async fn resolve_preview_path(
             .map(|p| p.display().to_string())
             .collect::<Vec<_>>()
             .join(" / ");
-        return Err(format!(
-            "scope 外: {} (許可: {roots})",
-            canonical.display()
-        ));
+        return Err(format!("scope 外: {} (許可: {roots})", canonical.display()));
     }
 
     Ok(canonical.to_string_lossy().to_string())
@@ -673,6 +720,7 @@ async fn get_or_create_session(
     model_override: Option<&str>,
     engine: EngineChoice,
     workspace_root: PathBuf,
+    profile_prompt: Option<String>,
 ) -> Result<Arc<AsyncMutex<SessionState>>, String> {
     {
         let map = state.sessions.read().await;
@@ -686,9 +734,10 @@ async fn get_or_create_session(
     let mut agent = match engine {
         EngineChoice::ReAct => {
             let model = model_override.unwrap_or(DEFAULT_MODEL);
-            let provider = Provider::resolve(None, model)
-                .map_err(|e| format!("provider `{model}`: {e}"))?;
-            let mut agent_config = AgentConfig::new(ApprovalMode::Allowlist, /*in_place=*/ true);
+            let provider =
+                Provider::resolve(None, model).map_err(|e| format!("provider `{model}`: {e}"))?;
+            let mut agent_config =
+                AgentConfig::new(ApprovalMode::Allowlist, /*in_place=*/ true);
             // Default-equip the kotonia.ai /api/v1 capability. The agent's
             // bash subprocess inherits KOTONIA_API_KEY (set at desktop
             // startup from the paired device_token in main.rs), so the
@@ -699,7 +748,9 @@ async fn get_or_create_session(
             // the model speaks in character while keeping all the bash / tool
             // semantics intact. See `persona::EVE` for the prompt and the rest
             // of the character definition.
-            agent_config.persona_prefix = Some(crate::persona::EVE.system_prompt.to_string());
+            agent_config.persona_prefix = Some(
+                profile_prompt.unwrap_or_else(|| crate::persona::EVE.system_prompt.to_string()),
+            );
             DispatchAgent::ReAct(Agent::new(&workspace.root, provider, agent_config))
         }
         EngineChoice::ClaudeCode => {

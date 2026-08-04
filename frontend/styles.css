@@ -616,6 +616,52 @@ body {
   box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
 }
 
+.profile-modal-body {
+  width: min(680px, calc(100vw - 32px));
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+}
+.profile-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 11px 0;
+  color: var(--muted, #9aa0aa);
+  font-size: 0.9rem;
+}
+.profile-field input,
+.profile-field textarea {
+  width: 100%;
+  padding: 8px 10px;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 7px;
+  font: inherit;
+  resize: vertical;
+}
+.profile-image-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0;
+}
+.profile-image-row img {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
+}
+.profile-image-path,
+.profile-hint {
+  max-width: 480px;
+  margin: 6px 0 0;
+  color: #9097a3;
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
 .modal-body h2 {
   margin: 0 0 8px;
   font-size: 16px;
