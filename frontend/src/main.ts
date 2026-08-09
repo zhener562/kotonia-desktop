@@ -998,7 +998,7 @@ function extractSpeakableHost(url) {
 }
 
 // Speech-channel markers, mirroring the hage web contract:
-//   {{VOICE: ...}} — vocal-acting direction; rides the Qwen3 `instruct`.
+//   {{VOICE: ...}} — vocal-acting direction; rides the VoxCPM2 `instruct`.
 //   {{SPEAK: ...}} — the spoken channel override. When present, ONLY this is
 //     read aloud (the full answer stays on screen). Absent → the sanitized
 //     answer is spoken, i.e. today's behavior. This is the voice/text split:

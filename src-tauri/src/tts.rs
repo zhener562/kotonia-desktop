@@ -73,7 +73,7 @@ pub async fn run_stream(
 
     let server = cfg.server.trim_end_matches('/').to_string();
     let url = format!("{server}/api/v1/audio/speech");
-    if !matches!(voice.engine, "qwen3" | "irodori" | "voicevox") {
+    if !matches!(voice.engine, "voxcpm" | "irodori" | "voicevox") {
         let other = voice.engine;
         let _ = app.emit(
             "tts_error",
@@ -85,25 +85,22 @@ pub async fn run_stream(
         return;
     }
 
-    // Per-turn `{{VOICE: ...}}` acting direction (Qwen3 only), merged
-    // behind the persona's base register. `None` → server default.
+    // Per-turn `{{VOICE: ...}}` acting direction, merged behind the
+    // persona's base register. `None` → server default.
     let merged_instruct = voice.merged_instruct(instruct.as_deref());
 
     let body = match voice.engine {
-        "qwen3" => serde_json::json!({
+        "voxcpm" => serde_json::json!({
             "input": text,
             "engine": voice.engine,
             "language": voice.language,
+            // `/api/v1/audio/speech` maps the wire `voice` field to the
+            // backend's Voice Design for voxcpm (see VoiceConfig::speaker).
             "voice": voice.speaker,
             "speed": voice.speed,
             // Serializes to null when there's no direction; the backend
             // proxy's Option<String> maps null → server default instruct.
             "instruct": merged_instruct,
-            // Critical for first-byte latency: the python tts_server
-            // defaults this to true, which bundles JA+EN mixed input
-            // into a single chunk emitted only after full generation.
-            // See VoiceConfig::split_mixed_languages for the trade-off.
-            "split_mixed_languages": voice.split_mixed_languages,
         }),
         "voicevox" => {
             // VoiceVox uses numeric speaker ids; the persona constant

@@ -235,9 +235,9 @@ pub async fn run_stream(
         }
     };
 
-    // Per-turn `{{VOICE: ...}}` acting direction (Qwen3 only), merged
-    // behind the persona's base register. The ditto→TTS proxy forwards
-    // `instruct` only for the qwen3 backend. `None` → server default.
+    // Per-turn `{{VOICE: ...}}` acting direction, merged behind the
+    // persona's base register. The ditto→TTS proxy forwards `instruct`
+    // for voxcpm. `None` → server default.
     let merged_instruct = voice.merged_instruct(instruct.as_deref());
     let body = serde_json::json!({
         "text": text,
@@ -247,12 +247,11 @@ pub async fn run_stream(
         // python ditto server expects single-letter `lang` too (j/a/z).
         "lang": match voice.language { "ja" => "j", "en" => "a", "zh" => "z", other => other },
         "speed": voice.speed,
-        "speaker": voice.speaker,
+        // VoxCPM2's voice is a Voice Design, carried in the `design`
+        // field (the ditto server ignores `speaker` for voxcpm).
+        "design": voice.speaker,
         "instruct": merged_instruct,
         "fps": 25,
-        // Qwen3-TTS path inside Ditto: keep the same streaming-friendly
-        // setting we use on the pure-TTS path (see persona.rs comment).
-        "split_mixed_languages": voice.split_mixed_languages,
     });
 
     let client = match reqwest::Client::builder()

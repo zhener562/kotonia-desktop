@@ -28,41 +28,36 @@ pub struct Persona {
     pub avatar_png: &'static [u8],
 }
 
-/// TTS request shape used by `/api/v1/audio/speech`. Currently
-/// Qwen3-TTS is the only supported engine for kotonia-desktop voice —
-/// it's the premium quality path on the kotonia.ai backend. Future
-/// fallback to Irodori / VoiceVox can be added by switching on
-/// `engine`.
+/// TTS request shape used by `/api/v1/audio/speech`. The voice runs on
+/// VoxCPM2 — the multilingual, Voice Design-driven engine on the kotonia.ai
+/// backend (Qwen3-TTS was retired on 2026-08-10 and its alias routes to
+/// VoxCPM2). Future fallback to Irodori / VoiceVox can be added by
+/// switching on `engine`.
 pub struct VoiceConfig {
     pub engine: &'static str,
+    /// VoxCPM2 Voice Design: a short natural-language description of the
+    /// voice. `/api/v1/audio/speech` maps the wire `voice` field to the
+    /// backend's `design` for voxcpm; for voicevox this holds the numeric
+    /// speaker id as a string instead.
     pub speaker: &'static str,
     pub language: &'static str,
     pub speed: f32,
-    /// Qwen3-TTS specific. Server-side default is `true` and silently
-    /// disables streaming for any JA+EN mixed input (it bundles all
-    /// runs and `yield`s one chunk at the end → first-byte equals
-    /// total generation time, which is the dominant perceived-latency
-    /// killer for technical-assistant personas whose every response
-    /// mixes English code/command tokens into Japanese prose). Set
-    /// `false` to keep the streaming path and accept that embedded
-    /// English may be mispronounced in the JA voice.
-    pub split_mixed_languages: bool,
     /// Base vocal-acting instruction anchoring the persona's default
     /// register. Merged *ahead* of any per-turn direction the model emits
     /// via a `{{VOICE: ...}}` marker (see `merged_instruct`). Kept minimal
-    /// — Eve's voice identity comes from `speaker`, so the per-turn
-    /// direction is what actually moves the delivery. Qwen3-only; Irodori
-    /// and VoiceVox ignore `instruct`.
+    /// — Eve's voice identity comes from the Voice Design (`speaker`), so
+    /// the per-turn direction is what actually moves the delivery.
+    /// VoxCPM2 forwards `instruct`; Irodori and VoiceVox ignore it.
     pub base_instruct: &'static str,
 }
 
 impl VoiceConfig {
-    /// Compose the Qwen3 `instruct` for a single utterance: `base_instruct`
-    /// followed by the optional per-turn direction extracted from the
-    /// model's `{{VOICE: ...}}` marker. Returns `None` when both are empty
-    /// so the server keeps its own default rather than being handed "".
+    /// Compose the VoxCPM2 `instruct` for a single utterance:
+    /// `base_instruct` followed by the optional per-turn direction extracted
+    /// from the model's `{{VOICE: ...}}` marker. Returns `None` when both are
+    /// empty so the server keeps its own default rather than being handed "".
     ///
-    /// Mirrors the hage web client's `qwen3MergedInstruct` — a stable base
+    /// Mirrors the hage web client's merged-instruct pattern — a stable base
     /// preserves voice identity while the direction is free to swing per
     /// turn without drifting the timbre.
     pub fn merged_instruct(&self, per_turn: Option<&str>) -> Option<String> {
@@ -86,23 +81,15 @@ pub const EVE: Persona = Persona {
     avatar_png: include_bytes!("../../frontend/persona/eve.png"),
     system_prompt: EVE_SYSTEM_PROMPT,
     voice: VoiceConfig {
-        engine: "qwen3",
-        // Qwen3-TTS ships exactly one Japanese speaker preset
-        // (`Ono_Anna`); using it gives Eve a consistent JP voice
-        // without depending on the offline Base / clone server. Swap
-        // for a cloned voice once Qwen3-TTS Base (port 8896) is
-        // brought online again.
-        speaker: "Ono_Anna",
+        engine: "voxcpm",
+        // VoxCPM2's voice comes from a natural-language Voice Design rather
+        // than a speaker preset (Qwen3-TTS and its `Ono_Anna` speaker are
+        // retired). This anchors Eve's identity: adult woman, calm low
+        // register, slow deliberate delivery. Per-turn `{{VOICE: ...}}`
+        // directions swing the emotion on top without redrawing the timbre.
+        speaker: "若い成人女性の落ち着いた低声。穏やかな中低音で柔らかな音色、ゆっくり明瞭に、抑制の効いた観測者らしい冷静な口調で話す",
         language: "ja",
         speed: 1.0,
-        // Native English pronunciation for embedded EN tokens
-        // (`shell`, `ls -la`, `main.rs`) AND streaming first-byte
-        // latency, both. Used to be `false` (workaround for the
-        // python tts_server's mixed-mode bundling) but that's fixed
-        // upstream now — `generate_mixed` yields each upstream WAV
-        // chunk through as it lands instead of accumulating PCM and
-        // emitting one chunk at the end. Closes kotonia issue #139.
-        split_mixed_languages: true,
         // Empty: Eve's register rides entirely on the per-turn
         // `{{VOICE: ...}}` direction her prompt emits. Set a light anchor
         // here only if markerless turns start sounding flat.
