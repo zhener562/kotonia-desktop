@@ -86,7 +86,12 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
-        run: cargo tauri build --bundles ${{ matrix.bundles }}
+        # --locked: build exactly the committed src-tauri/Cargo.lock. Without
+        # it every tag resolved the newest crates at build time, so a release
+        # could pull a version published hours earlier, and rerunning a tag did
+        # not reproduce the binary the kotonia-cli pin above promises.
+        # Bump the lock locally (with hage's scripts/cargo-age-guard.py) instead.
+        run: cargo tauri build --bundles ${{ matrix.bundles }} -- --locked
 
       # Tauri creates updater signatures for AppImage, MSI, NSIS and macOS
       # archives, but the deb package must be signed explicitly. The updater
