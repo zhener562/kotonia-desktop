@@ -1693,6 +1693,19 @@ listen('agent_event', (msg) => {
     case 'malformed':
       appendLog('malformed', `[malformed] ${ev.excerpt}`);
       break;
+    case 'context_compacted': {
+      // kotonia-cli folded older turns to stay inside the model's window.
+      const parts = [];
+      if (ev.stubbed > 0) parts.push(`${ev.stubbed} old outputs stubbed`);
+      if (ev.summarised > 0) parts.push(`${ev.summarised} older messages summarised`);
+      if (ev.summary_failed) parts.push('summary failed, outputs stubbed instead');
+      const detail = parts.length ? `, ${parts.join(', ')}` : '';
+      appendLog(
+        'info',
+        `[context compacted: ~${ev.before_tokens.toLocaleString()} → ~${ev.after_tokens.toLocaleString()} tokens${detail}]`,
+      );
+      break;
+    }
     case 'error':
       appendLog('error', `[error] ${ev.message}`);
       // Backend may emit `error` without a following `done` (e.g. agent
