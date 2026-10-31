@@ -34,6 +34,8 @@
         <option value="avatar">Avatar</option>
       </select>
       <button id="btn-profile" type="button" title="システムプロンプト・人格・顔画像を設定">Profile</button>
+      <button id="btn-home-toggle" type="button" title="記憶ファイル・メールなどのつながり・定期チェックを使う (切り替えると新しいセッション)">🏠 ホーム: オフ</button>
+      <button id="btn-home-panel" type="button" title="定期チェックの結果と設定" hidden>フィード<span id="home-badge" class="home-badge" hidden></span></button>
       <button id="btn-toggle-preview" type="button" title="プレビューペイン表示切替" hidden>▶ プレビュー</button>
     </div>
   </header>
@@ -122,6 +124,58 @@
       <div class="modal-actions">
         <button id="approval-deny" type="button" class="btn-deny">拒否</button>
         <button id="approval-approve" type="button" class="btn-approve">承認</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="connector-modal" class="modal hidden" role="dialog" aria-modal="true">
+    <form id="connector-form" class="modal-body" autocomplete="off">
+      <h2 id="connector-title">接続</h2>
+      <p id="connector-reason" class="connector-reason"></p>
+      <ul id="connector-consent" class="connector-consent"></ul>
+      <p id="connector-help" class="connector-help"></p>
+      <button id="connector-help-link" type="button" class="link-btn" hidden></button>
+      <div id="connector-fields" class="connector-fields"></div>
+      <div class="modal-actions">
+        <button id="connector-cancel" type="button" class="btn-deny">キャンセル</button>
+        <button type="submit" class="btn-approve">連携する</button>
+      </div>
+    </form>
+  </div>
+
+  <div id="site-modal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-body">
+      <h2>見慣れないサイトを開こうとしています</h2>
+      <p id="site-host" class="site-host"></p>
+      <pre id="site-url" class="approval-command"></pre>
+      <div class="modal-actions">
+        <button id="site-deny" type="button" class="btn-deny">開かない</button>
+        <button id="site-once" type="button">今回だけ</button>
+        <button id="site-always" type="button" class="btn-approve">常に許可</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="home-modal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-body home-modal-body">
+      <h2>ホーム</h2>
+      <p id="home-status-line" class="home-status-line"></p>
+      <label class="home-row">定期チェック (HEARTBEAT.md)
+        <select id="home-heartbeat">
+          <option value="0">オフ</option>
+          <option value="15">15 分ごと</option>
+          <option value="30">30 分ごと</option>
+          <option value="60">60 分ごと</option>
+        </select>
+      </label>
+      <h3>フィード</h3>
+      <ul id="home-feed" class="home-feed"></ul>
+      <h3>つながり</h3>
+      <ul id="home-connectors" class="home-list"></ul>
+      <h3>定期チェック中に開けるサイト</h3>
+      <ul id="home-sites" class="home-list"></ul>
+      <div class="modal-actions">
+        <button id="home-close" type="button" class="btn-deny">閉じる</button>
       </div>
     </div>
   </div>

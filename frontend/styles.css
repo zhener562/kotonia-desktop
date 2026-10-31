@@ -762,3 +762,27 @@ body {
 .login-status.approved {
   color: var(--ok);
 }
+
+/* ── home mode ─────────────────────────────────────────── */
+#btn-home-toggle.on { background: #2f6f4f; color: #fff; }
+.home-badge { display: inline-block; min-width: 1.2em; margin-left: 4px; padding: 0 4px;
+  border-radius: 8px; background: #d9534f; color: #fff; font-size: 11px; line-height: 1.4; }
+.connector-reason { font-weight: 600; }
+.connector-consent { margin: 4px 0 8px 1.2em; padding: 0; font-size: 13px; opacity: 0.85; }
+.connector-help { font-size: 13px; margin: 4px 0; }
+.link-btn { background: none; border: none; color: #4a90d9; padding: 0; cursor: pointer;
+  text-decoration: underline; font-size: 13px; }
+.connector-fields { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.connector-fields label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.connector-fields input { padding: 6px 8px; font-size: 14px; }
+.site-host { font-weight: 600; }
+.home-modal-body { width: min(640px, 92vw); max-height: 86vh; overflow-y: auto; }
+.home-modal-body h3 { margin: 14px 0 6px; font-size: 14px; }
+.home-status-line { font-size: 13px; opacity: 0.85; }
+.home-row { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+.home-feed, .home-list { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+.home-feed li { padding: 6px 0; border-bottom: 1px solid rgba(127,127,127,0.25); white-space: pre-wrap; }
+.home-feed .feed-meta { font-size: 11px; opacity: 0.65; display: block; }
+.home-feed .kind-error, .home-feed .kind-approval_needed { opacity: 0.75; }
+.home-list li { padding: 2px 0; }
+.home-badge[hidden] { display: none; }

@@ -35,6 +35,15 @@ pub type PendingApprovals = Arc<StdMutex<HashMap<String, std::sync::mpsc::Sender
 /// can hold it without the `!Clone` headache.
 pub type RunningTasks = Arc<StdMutex<HashMap<String, AbortHandle>>>;
 
+/// A connector card waiting for the user: `Some(values)` when they filled it,
+/// `None` when they cancelled. The values include the secret, which goes
+/// straight from here into the vault — never into an event or a log.
+pub type ConnectorReply = Option<std::collections::BTreeMap<String, String>>;
+pub type PendingConnectors = Arc<StdMutex<HashMap<String, std::sync::mpsc::Sender<ConnectorReply>>>>;
+
+/// "Open this unfamiliar site?" waiting for `once` / `always` / `deny`.
+pub type PendingSites = Arc<StdMutex<HashMap<String, std::sync::mpsc::Sender<String>>>>;
+
 pub struct AppState {
     pub sessions: Arc<SessionRegistry>,
     pub pending_approvals: PendingApprovals,
@@ -47,6 +56,10 @@ pub struct AppState {
     /// requested. The mutex prevents concurrent first-use calls from racing
     /// to register the same bundled avatar.
     pub avatar_ready: AsyncMutex<bool>,
+    pub pending_connectors: PendingConnectors,
+    pub pending_sites: PendingSites,
+    /// The resident heartbeat loop while home mode is on (`None` = stopped).
+    pub home_runner: StdMutex<Option<AbortHandle>>,
 }
 
 impl AppState {
@@ -57,6 +70,9 @@ impl AppState {
             running_tasks: Arc::new(StdMutex::new(HashMap::new())),
             auth_invalid: std::sync::atomic::AtomicBool::new(false),
             avatar_ready: AsyncMutex::new(false),
+            pending_connectors: Arc::new(StdMutex::new(HashMap::new())),
+            pending_sites: Arc::new(StdMutex::new(HashMap::new())),
+            home_runner: StdMutex::new(None),
         }
     }
 }

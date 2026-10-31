@@ -611,6 +611,7 @@ async function submitTask() {
       workspacePath,
       systemPrompt: profile.systemPrompt,
       persona: profile.persona,
+      home: homeMode,
     });
     appendLog(
       'task-submit',
@@ -1756,6 +1757,228 @@ listen('agent_event', (msg) => {
 listen('approval_request', (msg) => {
   if (msg.payload) showApproval(msg.payload);
 });
+
+// ── home mode (resident agent) ──────────────────────────────────────
+// Mirrors kotonia-cli's `--home` + `home run`: memory files and connectors
+// in the session prompt, the heartbeat running while the app is open, and
+// the agent asking for accounts / unfamiliar sites through the modals below.
+
+const HOME_LS_KEY = 'kotonia_home_mode';
+const btnHomeToggle = element<HTMLButtonElement>('btn-home-toggle');
+const btnHomePanel = element<HTMLButtonElement>('btn-home-panel');
+const homeBadge = element<HTMLSpanElement>('home-badge');
+const homeModal = element<HTMLDivElement>('home-modal');
+const homeStatusLine = element<HTMLParagraphElement>('home-status-line');
+const homeHeartbeat = element<HTMLSelectElement>('home-heartbeat');
+const homeFeed = element<HTMLUListElement>('home-feed');
+const homeConnectors = element<HTMLUListElement>('home-connectors');
+const homeSites = element<HTMLUListElement>('home-sites');
+const homeClose = element<HTMLButtonElement>('home-close');
+const connectorModal = element<HTMLDivElement>('connector-modal');
+const connectorForm = element<HTMLFormElement>('connector-form');
+const connectorTitle = element<HTMLHeadingElement>('connector-title');
+const connectorReason = element<HTMLParagraphElement>('connector-reason');
+const connectorConsent = element<HTMLUListElement>('connector-consent');
+const connectorHelp = element<HTMLParagraphElement>('connector-help');
+const connectorHelpLink = element<HTMLButtonElement>('connector-help-link');
+const connectorFields = element<HTMLDivElement>('connector-fields');
+const connectorCancel = element<HTMLButtonElement>('connector-cancel');
+const siteModal = element<HTMLDivElement>('site-modal');
+const siteHost = element<HTMLParagraphElement>('site-host');
+const siteUrl = element<HTMLPreElement>('site-url');
+
+let homeMode = false;
+try {
+  homeMode = localStorage.getItem(HOME_LS_KEY) === '1';
+} catch {}
+let unseenFeed = 0;
+let pendingConnectorId: string | null = null;
+let pendingSiteId: string | null = null;
+
+const FEED_KIND_LABEL = {
+  heartbeat: '定期チェック',
+  reminder: 'リマインダー',
+  stale_reminder: '期限切れのリマインダー',
+  approval_needed: '承認が要るため止めた操作',
+  error: 'エラー',
+};
+
+function renderHomeButtons() {
+  btnHomeToggle.textContent = homeMode ? '🏠 ホーム: オン' : '🏠 ホーム: オフ';
+  btnHomeToggle.classList.toggle('on', homeMode);
+  btnHomePanel.hidden = !homeMode;
+  homeBadge.hidden = unseenFeed === 0;
+  homeBadge.textContent = String(unseenFeed);
+}
+
+function feedLine(item) {
+  const li = document.createElement('li');
+  li.className = `kind-${item.kind}`;
+  const meta = document.createElement('span');
+  meta.className = 'feed-meta';
+  const when = new Date(item.ts).toLocaleString();
+  meta.textContent = `${when} · ${FEED_KIND_LABEL[item.kind] || item.kind}`;
+  li.appendChild(meta);
+  li.appendChild(document.createTextNode(item.text));
+  return li;
+}
+
+async function refreshHomePanel() {
+  try {
+    const st = await invoke('home_status');
+    const hb = st.heartbeat_every_min ? `${st.heartbeat_every_min} 分ごと (次: ${st.next_due})` : 'オフ';
+    homeStatusLine.textContent =
+      `${st.dir} · 定期チェック ${hb} · 時間帯 ${st.active_hours} · ` +
+      (st.runner_running ? 'このアプリで実行中' : '停止中');
+    homeHeartbeat.value = String(st.heartbeat_every_min || 0);
+    if (![...homeHeartbeat.options].some((o) => o.value === homeHeartbeat.value)) {
+      const opt = document.createElement('option');
+      opt.value = homeHeartbeat.value;
+      opt.textContent = `${homeHeartbeat.value} 分ごと`;
+      homeHeartbeat.appendChild(opt);
+    }
+    homeFeed.replaceChildren(...(st.feed.length ? st.feed.map(feedLine) : [Object.assign(document.createElement('li'), { textContent: 'まだ何もありません' })]));
+    const li = (t) => Object.assign(document.createElement('li'), { textContent: t });
+    homeConnectors.replaceChildren(...(st.connectors.length ? st.connectors.map((t) => li(t.replace(/^- /, '').replace(/`/g, ''))) : [li('まだありません (会話の中で必要になったときに頼まれます)')]));
+    homeSites.replaceChildren(...(st.web_sites.length ? st.web_sites.map(li) : [li('ありません (定期チェック中のネットアクセスは止まります)')]));
+  } catch (e) {
+    homeStatusLine.textContent = 'ホームの状態を読めません: ' + String(e);
+  }
+}
+
+async function startHomeRunner() {
+  try {
+    await invoke('home_start_runner');
+  } catch (e) {
+    appendLog('error', '定期チェックを開始できません: ' + String(e));
+  }
+}
+
+async function setHomeMode(on: boolean) {
+  homeMode = on;
+  try { localStorage.setItem(HOME_LS_KEY, on ? '1' : '0'); } catch {}
+  renderHomeButtons();
+  if (on) {
+    await startHomeRunner();
+  } else {
+    try { await invoke('home_stop_runner'); } catch {}
+  }
+  // The session prompt differs with and without home, so start fresh.
+  await startNewSession();
+  appendLog('info', on ? 'ホームモード: 記憶ファイルとつながりを使います' : 'ホームモードを切りました');
+}
+
+btnHomeToggle.addEventListener('click', () => { void setHomeMode(!homeMode); });
+btnHomePanel.addEventListener('click', async () => {
+  unseenFeed = 0;
+  renderHomeButtons();
+  await refreshHomePanel();
+  homeModal.classList.remove('hidden');
+});
+homeClose.addEventListener('click', () => homeModal.classList.add('hidden'));
+homeHeartbeat.addEventListener('change', async () => {
+  try {
+    await invoke('home_set_heartbeat', { minutes: Number(homeHeartbeat.value) });
+  } catch (e) {
+    appendLog('error', '定期チェックの設定に失敗: ' + String(e));
+  }
+  await refreshHomePanel();
+});
+
+listen('home_feed', (msg) => {
+  const item = msg.payload;
+  if (!item) return;
+  if (!homeModal.classList.contains('hidden')) {
+    homeFeed.prepend(feedLine(item));
+  } else {
+    unseenFeed += 1;
+    renderHomeButtons();
+  }
+  if (item.kind === 'heartbeat' || item.kind === 'reminder') {
+    appendLog('info', `🏠 ${FEED_KIND_LABEL[item.kind]}: ${item.text}`);
+  }
+});
+
+listen('home_runner_stopped', (msg) => {
+  appendLog('error', '定期チェックが止まりました: ' + String(msg.payload));
+});
+
+// Connector card: the agent asked for an account mid-turn. The secret is
+// typed here and sent once to the backend, which writes it to the vault.
+function showConnectorCard(req) {
+  const card = req.card || {};
+  pendingConnectorId = req.request_id;
+  connectorTitle.textContent = `接続: ${card.title || ''}`;
+  connectorReason.textContent = card.reason || '';
+  connectorConsent.replaceChildren(...(card.consent || []).map((t) => Object.assign(document.createElement('li'), { textContent: t })));
+  connectorHelp.textContent = card.help || '';
+  connectorHelpLink.hidden = !card.help_url;
+  connectorHelpLink.textContent = card.help_url || '';
+  connectorHelpLink.onclick = () => { void invoke('open_login_help', { url: card.help_url }); };
+  connectorFields.replaceChildren(...(card.fields || []).map((f) => {
+    const label = document.createElement('label');
+    label.textContent = f.label + (f.secret ? ' (この PC の保管庫に入り、AI には渡りません)' : '');
+    const input = document.createElement('input');
+    input.name = f.key;
+    input.type = f.secret ? 'password' : 'text';
+    input.autocomplete = 'off';
+    input.value = f.default || '';
+    label.appendChild(input);
+    return label;
+  }));
+  connectorModal.classList.remove('hidden');
+  (connectorFields.querySelector('input[value=""]') as HTMLInputElement | null)?.focus();
+}
+
+async function answerConnector(values) {
+  const id = pendingConnectorId;
+  pendingConnectorId = null;
+  connectorModal.classList.add('hidden');
+  // Drop the typed secret from the DOM right away.
+  connectorFields.replaceChildren();
+  if (!id) return;
+  try {
+    await invoke('respond_connector', { requestId: id, values });
+  } catch (e) {
+    appendLog('error', 'connector respond failed: ' + String(e));
+  }
+}
+
+connectorForm.addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  const values = {};
+  connectorFields.querySelectorAll('input').forEach((i) => { values[(i as HTMLInputElement).name] = (i as HTMLInputElement).value; });
+  void answerConnector(values);
+});
+connectorCancel.addEventListener('click', () => { void answerConnector(null); });
+listen('connector_request', (msg) => { if (msg.payload) showConnectorCard(msg.payload); });
+
+// Unfamiliar site (home mode): once / always / deny, like Muse.
+async function answerSite(decision: string) {
+  const id = pendingSiteId;
+  pendingSiteId = null;
+  siteModal.classList.add('hidden');
+  if (!id) return;
+  try {
+    await invoke('respond_site', { requestId: id, decision });
+  } catch (e) {
+    appendLog('error', 'site respond failed: ' + String(e));
+  }
+}
+element<HTMLButtonElement>('site-once').addEventListener('click', () => { void answerSite('once'); });
+element<HTMLButtonElement>('site-always').addEventListener('click', () => { void answerSite('always'); });
+element<HTMLButtonElement>('site-deny').addEventListener('click', () => { void answerSite('deny'); });
+listen('site_request', (msg) => {
+  const req = msg.payload;
+  if (!req) return;
+  pendingSiteId = req.request_id;
+  siteHost.textContent = `${req.host} を開きますか？`;
+  siteUrl.textContent = req.url;
+  siteModal.classList.remove('hidden');
+});
+
+renderHomeButtons();
+if (homeMode) void startHomeRunner();
 
 // Boot.
 loadPersona();

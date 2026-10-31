@@ -14,6 +14,7 @@ use kotonia_cli::agent::provider::Provider;
 use kotonia_cli::agent::worktree::AgentWorkspace;
 
 use crate::bridge::{TauriApprovalHandler, TauriEventSink};
+use kotonia_cli::home::workspace::HomeDir;
 use crate::state::{AppState, SessionState};
 
 /// Default model alias. Resolves through kotonia-cli's provider registry to
@@ -281,6 +282,7 @@ pub async fn submit_task(
     workspace_path: Option<String>,
     system_prompt: Option<String>,
     persona: Option<String>,
+    home: Option<bool>,
 ) -> Result<SubmitTaskResponse, String> {
     let choice = resolve_engine(engine.as_deref(), model.as_deref())?;
 
@@ -304,11 +306,14 @@ pub async fn submit_task(
         choice,
         workspace_root,
         session_prompt(system_prompt.as_deref(), persona.as_deref()),
+        home.unwrap_or(false),
     )
     .await?;
     let task_id = uuid::Uuid::new_v4().to_string();
 
     let pending = state.pending_approvals.clone();
+    let pending_connectors = state.pending_connectors.clone();
+    let pending_sites = state.pending_sites.clone();
     let app_for_spawn = app.clone();
     let task_id_for_spawn = task_id.clone();
 
@@ -321,6 +326,8 @@ pub async fn submit_task(
             app: app_for_spawn.clone(),
             task_id: task_id_for_spawn.clone(),
             pending,
+            pending_connectors,
+            pending_sites,
         };
 
         let mut guard = session.lock().await;
@@ -729,6 +736,7 @@ async fn get_or_create_session(
     engine: EngineChoice,
     workspace_root: PathBuf,
     profile_prompt: String,
+    home: bool,
 ) -> Result<Arc<AsyncMutex<SessionState>>, String> {
     {
         let map = state.sessions.read().await;
@@ -756,6 +764,18 @@ async fn get_or_create_session(
             // prepended to the agent's tool-aware base prompt so the bash /
             // tool semantics stay intact.
             agent_config.persona_prefix = Some(profile_prompt);
+            if home {
+                // Home mode = kotonia-cli's `--home`: the memory files and the
+                // connectors section first (who you are, what you remember),
+                // then the profile. Connector cards and the site prompt come
+                // through TauriApprovalHandler.
+                let dir = HomeDir::resolve()?;
+                dir.ensure_initialized()?;
+                let prefix = kotonia_cli::home::conversation_prefix(&dir);
+                agent_config.persona_prefix =
+                    agent_config.persona_prefix.map(|p| format!("{prefix}\n\n{p}"));
+                agent_config.connectors = true;
+            }
             DispatchAgent::ReAct(Agent::new(&workspace.root, provider, agent_config))
         }
         EngineChoice::ClaudeCode => {
@@ -834,4 +854,166 @@ mod tests {
             DeviceAuthValidation::Unavailable
         );
     }
+}
+
+
+// ── home mode (resident agent) ─────────────────────────────────────────
+
+#[tauri::command]
+pub async fn respond_connector(
+    state: State<'_, AppState>,
+    request_id: String,
+    values: Option<std::collections::BTreeMap<String, String>>,
+) -> Result<(), String> {
+    let tx = state.pending_connectors.lock().unwrap().remove(&request_id);
+    match tx {
+        Some(tx) => {
+            let _ = tx.send(values);
+            Ok(())
+        }
+        None => Err(format!("no pending connector request {request_id}")),
+    }
+}
+
+#[tauri::command]
+pub async fn respond_site(
+    state: State<'_, AppState>,
+    request_id: String,
+    decision: String,
+) -> Result<(), String> {
+    let tx = state.pending_sites.lock().unwrap().remove(&request_id);
+    match tx {
+        Some(tx) => {
+            let _ = tx.send(decision);
+            Ok(())
+        }
+        None => Err(format!("no pending site request {request_id}")),
+    }
+}
+
+#[derive(Serialize)]
+pub struct HomeStatus {
+    pub dir: String,
+    /// Minutes, or `None` when the heartbeat is off.
+    pub heartbeat_every_min: Option<i64>,
+    pub next_due: Option<String>,
+    pub active_hours: String,
+    pub runner_running: bool,
+    pub connectors: Vec<String>,
+    pub web_sites: Vec<String>,
+    pub feed: Vec<kotonia_cli::home::feed::FeedItem>,
+}
+
+#[tauri::command]
+pub async fn home_status(state: State<'_, AppState>) -> Result<HomeStatus, String> {
+    use kotonia_cli::home::schedule::{JobKind, Schedule};
+    let dir = HomeDir::resolve()?;
+    dir.ensure_initialized()?;
+    let schedule = Schedule::load(dir.root())?;
+    let hb = schedule.heartbeat();
+    let hours = schedule.active_hours();
+    let offset = kotonia_cli::home::schedule::local_offset_now();
+    let runner_running = state
+        .home_runner
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|h| !h.is_finished());
+    Ok(HomeStatus {
+        dir: dir.root().display().to_string(),
+        heartbeat_every_min: hb.and_then(|j| match j.kind {
+            JobKind::Heartbeat { every_secs } => Some(every_secs / 60),
+            _ => None,
+        }),
+        next_due: hb.map(|j| {
+            j.next_due
+                .with_timezone(&offset)
+                .format("%m-%d %H:%M")
+                .to_string()
+        }),
+        active_hours: format!(
+            "{}-{}",
+            hours.start.format("%H:%M"),
+            hours.end.format("%H:%M")
+        ),
+        runner_running,
+        connectors: kotonia_cli::connectors::Registry::load()
+            .unwrap_or_default()
+            .prompt_lines(),
+        web_sites: kotonia_cli::web_allow::WebAllow::load()
+            .unwrap_or_default()
+            .sites
+            .keys()
+            .cloned()
+            .collect(),
+        feed: kotonia_cli::home::feed::recent(&dir, 50),
+    })
+}
+
+/// `minutes` = 0 turns the heartbeat off.
+#[tauri::command]
+pub async fn home_set_heartbeat(minutes: i64) -> Result<(), String> {
+    use kotonia_cli::home::schedule::Schedule;
+    let dir = HomeDir::resolve()?;
+    dir.ensure_initialized()?;
+    let mut s = Schedule::load(dir.root())?;
+    if minutes <= 0 {
+        s.clear_heartbeat();
+    } else {
+        s.set_heartbeat(minutes * 60, chrono::Utc::now());
+    }
+    s.save(dir.root())
+}
+
+/// Start the heartbeat loop inside this app. Feed items reach the window
+/// as `home_feed` events; the paired phone notifier (if any) still gets
+/// pushes. Fails if another runner (e.g. `kotonia-cli home run`) holds the
+/// home lock — only one may fire, or every tick would arrive twice.
+#[tauri::command]
+pub async fn home_start_runner(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    use kotonia_cli::home::{feed::Delivery, runner};
+    {
+        let guard = state.home_runner.lock().unwrap();
+        if guard.as_ref().is_some_and(|h| !h.is_finished()) {
+            return Ok(());
+        }
+    }
+    let dir = HomeDir::resolve()?;
+    dir.ensure_initialized()?;
+    // Probe the lock first so the caller hears about a CLI runner now,
+    // not as a silent task failure later. The probe lock is released
+    // before the loop takes it for real.
+    drop(runner::RunnerLock::acquire(&dir)?);
+    let notifier = kotonia_cli::notifier::load_notifier_config()
+        .map(|c| kotonia_cli::notifier::build_notifier(&c, reqwest::Client::new()));
+    let app_for_feed = app.clone();
+    let delivery = Delivery::new(dir.clone(), notifier, false).with_observer(Arc::new(
+        move |item: &kotonia_cli::home::feed::FeedItem| {
+            let _ = app_for_feed.emit("home_feed", item);
+        },
+    ));
+    let cfg = runner::RunnerConfig {
+        model: DEFAULT_MODEL.to_string(),
+        provider: None,
+        poll_secs: 60,
+        max_iterations: 15,
+        heartbeat_timeout: std::time::Duration::from_secs(600),
+        dry_run: false,
+    };
+    let app_for_exit = app.clone();
+    let handle = tokio::spawn(async move {
+        if let Err(e) = runner::run_forever_with(dir, cfg, delivery).await {
+            let _ = app_for_exit.emit("home_runner_stopped", e);
+        }
+    });
+    *state.home_runner.lock().unwrap() = Some(handle.abort_handle());
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn home_stop_runner(state: State<'_, AppState>) -> Result<(), String> {
+    if let Some(h) = state.home_runner.lock().unwrap().take() {
+        h.abort();
+    }
+    Ok(())
 }
