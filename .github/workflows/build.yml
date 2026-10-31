@@ -38,8 +38,9 @@ jobs:
           # Pin the dependency so rerunning a desktop tag reproduces the
           # original binary. Update this tag intentionally when taking a new
           # kotonia-cli release into kotonia-desktop.
-          # v0.1.11 — x-kotonia-client header + per-run start/end events.
-          ref: v0.1.11
+          # v0.1.12 — resident home mode, connectors + mail (search) tools,
+          # unattended web allowlist, tool-argument repair.
+          ref: v0.1.12
           path: kotonia-cli
 
       - name: Install Node.js
