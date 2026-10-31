@@ -93,8 +93,12 @@
       <h2>Profile</h2>
       <label class="profile-field">表示名<input id="profile-name" type="text"></label>
       <label class="profile-field">肩書き<input id="profile-tagline" type="text"></label>
-      <label class="profile-field">追加システムプロンプト<textarea id="profile-system-prompt" rows="6"></textarea></label>
-      <label class="profile-field">人格・話し方<textarea id="profile-persona" rows="6"></textarea></label>
+      <label class="profile-field">システムプロンプト<textarea id="profile-system-prompt" rows="8"></textarea></label>
+      <label class="profile-field">人格・話し方 (任意)<textarea id="profile-persona" rows="6" placeholder="空なら人格なし。キャラクターとして話させたいときに書きます"></textarea></label>
+      <div class="profile-preset-row">
+        <button id="profile-load-eve" type="button">Eve の人格を読み込む</button>
+        <button id="profile-reset-prompt" type="button">システムプロンプトを既定に戻す</button>
+      </div>
       <div class="profile-image-row">
         <img id="profile-image-preview" alt="profile preview">
         <div>
@@ -102,7 +106,7 @@
           <p id="profile-image-path" class="profile-image-path">Eve の既定画像</p>
         </div>
       </div>
-      <p class="profile-hint">見た目はすぐ反映されます。プロンプト変更時は新しいセッションを開始します。</p>
+      <p class="profile-hint">見た目はすぐ反映されます。プロンプト変更時は新しいセッションを開始します。音声の演技指示やファイルの書き出し方などアプリが動くための約束事は、ここに書いた内容とは別に常に付きます。</p>
       <div class="modal-actions">
         <button id="profile-cancel" type="button" class="btn-deny">キャンセル</button>
         <button type="submit" class="btn-approve">保存</button>

@@ -101,6 +101,9 @@ pub fn persona_info() -> serde_json::Value {
         "display_name": crate::persona::EVE.display_name,
         "tagline": crate::persona::EVE.tagline,
         "avatar_url": crate::persona::EVE.avatar_url,
+        // The profile editor pre-fills the default and offers Eve as a preset.
+        "default_system_prompt": crate::persona::DEFAULT_SYSTEM_PROMPT,
+        "eve_persona": crate::persona::EVE_PERSONA,
     })
 }
 
@@ -300,7 +303,7 @@ pub async fn submit_task(
         model.as_deref(),
         choice,
         workspace_root,
-        combine_profile_prompt(system_prompt.as_deref(), persona.as_deref()),
+        session_prompt(system_prompt.as_deref(), persona.as_deref()),
     )
     .await?;
     let task_id = uuid::Uuid::new_v4().to_string();
@@ -363,35 +366,40 @@ pub async fn submit_task(
     })
 }
 
-fn combine_profile_prompt(system_prompt: Option<&str>, persona: Option<&str>) -> Option<String> {
-    let blocks = [system_prompt, persona]
-        .into_iter()
-        .flatten()
+/// The ReAct session prompt: the user's system prompt (or the plain default),
+/// the user's optional persona, then the app's fixed conventions. The
+/// conventions always come last so a rewritten prompt cannot drop them.
+fn session_prompt(system_prompt: Option<&str>, persona: Option<&str>) -> String {
+    let system = system_prompt
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>();
-    if blocks.is_empty() {
-        None
-    } else {
-        Some(blocks.join("\n\n"))
-    }
+        .unwrap_or(crate::persona::DEFAULT_SYSTEM_PROMPT);
+    let persona = persona.map(str::trim).filter(|value| !value.is_empty());
+    [Some(system), persona, Some(crate::persona::APP_CONTRACT)]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 #[cfg(test)]
 mod profile_tests {
-    use super::combine_profile_prompt;
+    use super::session_prompt;
+    use crate::persona::{APP_CONTRACT, DEFAULT_SYSTEM_PROMPT};
 
     #[test]
-    fn profile_prompt_joins_non_empty_blocks() {
-        assert_eq!(
-            combine_profile_prompt(Some("  system  "), Some("persona")),
-            Some("system\n\npersona".to_string())
-        );
+    fn empty_profile_uses_the_plain_default() {
+        let prompt = session_prompt(Some("  "), None);
+        assert!(prompt.starts_with(DEFAULT_SYSTEM_PROMPT));
+        assert!(prompt.ends_with(APP_CONTRACT));
     }
 
     #[test]
-    fn empty_profile_uses_the_default() {
-        assert_eq!(combine_profile_prompt(Some("  "), None), None);
+    fn a_rewritten_prompt_keeps_the_app_conventions() {
+        let prompt = session_prompt(Some("  my rules  "), Some("persona"));
+        assert_eq!(prompt, format!("my rules\n\npersona\n\n{APP_CONTRACT}"));
+        assert!(!prompt.contains(DEFAULT_SYSTEM_PROMPT));
+        assert!(prompt.contains("{{VOICE:"));
     }
 }
 
@@ -720,7 +728,7 @@ async fn get_or_create_session(
     model_override: Option<&str>,
     engine: EngineChoice,
     workspace_root: PathBuf,
-    profile_prompt: Option<String>,
+    profile_prompt: String,
 ) -> Result<Arc<AsyncMutex<SessionState>>, String> {
     {
         let map = state.sessions.read().await;
@@ -744,13 +752,10 @@ async fn get_or_create_session(
             // curl examples appended by `kotonia_api_section_native` in
             // crates/kotonia-cli/src/agent/prompt.rs just work.
             agent_config.kotonia_api_base = kotonia_cli::config::load().map(|c| c.server);
-            // Eve persona: prepended to the agent's tool-aware base prompt so
-            // the model speaks in character while keeping all the bash / tool
-            // semantics intact. See `persona::EVE` for the prompt and the rest
-            // of the character definition.
-            agent_config.persona_prefix = Some(
-                profile_prompt.unwrap_or_else(|| crate::persona::EVE.system_prompt.to_string()),
-            );
+            // User prompt + persona + app conventions (`session_prompt`),
+            // prepended to the agent's tool-aware base prompt so the bash /
+            // tool semantics stay intact.
+            agent_config.persona_prefix = Some(profile_prompt);
             DispatchAgent::ReAct(Agent::new(&workspace.root, provider, agent_config))
         }
         EngineChoice::ClaudeCode => {

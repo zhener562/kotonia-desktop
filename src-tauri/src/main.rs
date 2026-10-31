@@ -12,6 +12,10 @@ mod updater;
 use state::AppState;
 
 fn main() {
+    // Requests to kotonia.ai say they come from the desktop app, not the CLI
+    // (`x-kotonia-client: desktop/<kotonia-cli version> (<os>)`).
+    kotonia_cli::client_info::set_client_name("desktop");
+
     // Propagate the paired device_token into KOTONIA_API_KEY so the ReAct
     // agent's bash subprocess inherits it. The backend's `require_api_token`
     // (backend/src/handlers/auth.rs) accepts a device_token as a Bearer

@@ -640,6 +640,12 @@ body {
   font: inherit;
   resize: vertical;
 }
+.profile-preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 8px;
+}
 .profile-image-row {
   display: flex;
   align-items: center;

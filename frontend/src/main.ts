@@ -100,6 +100,18 @@ const profileImagePreview = element<HTMLImageElement>('profile-image-preview');
 const profileImagePathEl = element<HTMLParagraphElement>('profile-image-path');
 const profilePickImage = element<HTMLButtonElement>('profile-pick-image');
 const profileCancel = element<HTMLButtonElement>('profile-cancel');
+const profileLoadEve = element<HTMLButtonElement>('profile-load-eve');
+const profileResetPrompt = element<HTMLButtonElement>('profile-reset-prompt');
+
+// Default system prompt and the Eve preset, from the Rust side
+// (`persona_info`). An empty saved prompt means "use the default", so a
+// later change to the default reaches users who never edited it.
+let promptDefaults = { system: '', eve: '' };
+invoke<{ default_system_prompt: string; eve_persona: string }>('persona_info')
+  .then((info) => {
+    promptDefaults = { system: info.default_system_prompt, eve: info.eve_persona };
+  })
+  .catch((e) => appendLog('error', 'persona_info: ' + String(e)));
 
 let sessionId = null;
 let pendingApprovalId = null;
@@ -163,7 +175,7 @@ async function checkForUpdate() {
 const PROFILE_LS_KEY = 'kotonia_desktop_profile_v1';
 const DEFAULT_PROFILE = {
   name: 'Eve',
-  tagline: 'observant android AGI · kotonia desktop',
+  tagline: 'kotonia desktop',
   systemPrompt: '',
   persona: '',
   avatarPath: '',
@@ -203,7 +215,7 @@ function openProfileEditor() {
   draftAvatarPath = profile.avatarPath;
   profileNameInput.value = profile.name;
   profileTaglineInput.value = profile.tagline;
-  profileSystemPromptInput.value = profile.systemPrompt;
+  profileSystemPromptInput.value = profile.systemPrompt || promptDefaults.system;
   profilePersonaInput.value = profile.persona;
   profileImagePreview.src = profileAvatarSrc();
   profileImagePathEl.textContent = profile.avatarPath || 'Eve の既定画像';
@@ -691,6 +703,12 @@ engineSelect.addEventListener('change', renderEngineWarning);
 btnWorkspace.addEventListener('click', pickWorkspace);
 btnProfile.addEventListener('click', openProfileEditor);
 profileCancel.addEventListener('click', () => profileModal.classList.add('hidden'));
+profileLoadEve.addEventListener('click', () => {
+  profilePersonaInput.value = promptDefaults.eve;
+});
+profileResetPrompt.addEventListener('click', () => {
+  profileSystemPromptInput.value = promptDefaults.system;
+});
 profilePickImage.addEventListener('click', () => {
   pickProfileImage().catch((e) => appendLog('error', 'profile image: ' + String(e)));
 });
@@ -700,7 +718,11 @@ profileForm.addEventListener('submit', (event) => {
   profile = {
     name: profileNameInput.value.trim() || 'Kotonia',
     tagline: profileTaglineInput.value.trim(),
-    systemPrompt: profileSystemPromptInput.value.trim(),
+    // Saved unchanged from the default → store '' so it keeps following it.
+    systemPrompt:
+      profileSystemPromptInput.value.trim() === promptDefaults.system.trim()
+        ? ''
+        : profileSystemPromptInput.value.trim(),
     persona: profilePersonaInput.value.trim(),
     avatarPath: draftAvatarPath,
   };
