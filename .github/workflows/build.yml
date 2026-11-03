@@ -9,6 +9,13 @@ on:
 permissions:
   contents: write
 
+# busybox-w64 bundled into the Windows installer (tauri.windows.conf.json).
+# Same pin as kotonia-cli's release.yml; move both together, and only to a
+# build that has been public for 7 days.
+env:
+  BUSYBOX_URL: https://frippery.org/files/busybox/busybox-w64-FRP-6354-g5f09fb446.exe
+  BUSYBOX_SHA256: 95343c871869cc0ab57ecec26b2f9af0370eb9c954f7e5ddd017163e4e0d09a0
+
 jobs:
   build:
     strategy:
@@ -40,7 +47,7 @@ jobs:
           # kotonia-cli release into kotonia-desktop.
           # v0.1.13 — per-folder memory + shared USER.md, memory tool,
           # per-folder mail grants, edit_file.
-          ref: v0.1.13
+          ref: feat/windows-busybox  # TEMP: swap to v0.1.14 before release
           path: kotonia-cli
 
       - name: Install Node.js
@@ -77,6 +84,15 @@ jobs:
             file \
             libssl-dev \
             libgtk-3-dev
+
+      - name: Fetch busybox-w64 (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $out = 'kotonia-desktop/src-tauri/resources/busybox.exe'
+          Invoke-WebRequest -Uri $env:BUSYBOX_URL -OutFile $out
+          $hash = (Get-FileHash $out -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $env:BUSYBOX_SHA256) { throw "busybox sha256 mismatch: $hash" }
 
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2"

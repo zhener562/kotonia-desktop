@@ -310,6 +310,17 @@ pub async fn submit_task(
     )
     .await?;
     let task_id = uuid::Uuid::new_v4().to_string();
+    // start/end per task, like one kotonia-cli run (labels only, never the
+    // prompt). Before this the desktop sent none: the CLI sends them from its
+    // main(), which the desktop does not go through.
+    let run = kotonia_cli::telemetry::Run::begin(
+        match choice {
+            EngineChoice::ReAct => "react",
+            EngineChoice::ClaudeCode => "claude-code",
+        },
+        model.as_deref().unwrap_or(DEFAULT_MODEL),
+        "desktop",
+    );
 
     let pending = state.pending_approvals.clone();
     let pending_connectors = state.pending_connectors.clone();
@@ -335,6 +346,14 @@ pub async fn submit_task(
             .agent
             .run_turn(&prompt, &mut approval, &mut sink)
             .await;
+        drop(guard);
+
+        if let Some(run) = &run {
+            if let Err(e) = &result {
+                run.fail(kotonia_cli::telemetry::failure_kind(e));
+            }
+            run.finish(result.is_ok()).await;
+        }
 
         if let Err(e) = result {
             let _ = app_for_spawn.emit(
@@ -531,6 +550,21 @@ pub async fn tts_speak(
 /// Open a URL in the system's default browser. Used by the login flow to
 /// hand off the device-code approval step (`verification_uri` from
 /// `start_login`) to a real, already-logged-in browser tab.
+#[derive(Serialize)]
+pub struct ShellInfo {
+    pub os: &'static str,
+    /// `bash`, `busybox` (no Git for Windows; the bundled fallback) or None.
+    pub shell: Option<&'static str>,
+}
+
+#[tauri::command]
+pub async fn shell_info() -> ShellInfo {
+    ShellInfo {
+        os: std::env::consts::OS,
+        shell: kotonia_cli::execution::host::shell_kind(),
+    }
+}
+
 #[tauri::command]
 pub async fn open_login_help(app: AppHandle, url: Option<String>) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;

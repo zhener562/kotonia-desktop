@@ -1758,6 +1758,38 @@ listen('approval_request', (msg) => {
   if (msg.payload) showApproval(msg.payload);
 });
 
+// ── Windows without Git: commands run in the bundled BusyBox ─────────
+// Works straight after install; Git for Windows is offered, not required.
+
+const shellNotice = element<HTMLDivElement>('shell-notice');
+const shellNoticeText = element<HTMLSpanElement>('shell-notice-text');
+const SHELL_NOTICE_LS_KEY = 'kotonia_shell_notice_dismissed';
+
+async function showShellNotice() {
+  try {
+    const info = await invoke('shell_info');
+    if (info.os !== 'windows' || info.shell === 'bash') return;
+    if (info.shell === 'busybox') {
+      if (localStorage.getItem(SHELL_NOTICE_LS_KEY) === '1') return;
+      shellNoticeText.textContent =
+        'Git for Windows が入っていないので、同梱の簡易シェル (BusyBox) でコマンドを動かしています。このままでも使えます。Git を入れると使えるコマンドが増えます (入れた後はアプリを再起動)。';
+    } else {
+      shellNoticeText.textContent =
+        'コマンドを動かすシェルが見つかりません。Git for Windows を入れてアプリを再起動してください。';
+    }
+    shellNotice.hidden = false;
+  } catch {}
+}
+
+element<HTMLButtonElement>('shell-notice-help').addEventListener('click', () => {
+  void invoke('open_login_help', { url: 'https://gitforwindows.org/' });
+});
+element<HTMLButtonElement>('shell-notice-close').addEventListener('click', () => {
+  shellNotice.hidden = true;
+  try { localStorage.setItem(SHELL_NOTICE_LS_KEY, '1'); } catch {}
+});
+void showShellNotice();
+
 // ── this folder's memory ─────────────────────────────────────────────
 // kotonia-cli keeps notes per work folder (~/.kotonia/projects) and shares
 // USER.md across folders. The agent writes them through its `memory` tool;

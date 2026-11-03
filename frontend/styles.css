@@ -791,3 +791,7 @@ body {
 .memory-text { width: 100%; box-sizing: border-box; font: 13px/1.5 ui-monospace, monospace; resize: vertical; }
 .memory-note { font-size: 12px; opacity: 0.7; margin: 10px 0 0; }
 .memory-mail-row { display: flex; gap: 8px; align-items: center; }
+
+/* "running on busybox" notice (Windows without Git) */
+.shell-notice { position: fixed; left: 12px; right: 12px; bottom: 96px; z-index: 20; display: flex; gap: 10px; align-items: center; padding: 8px 12px; border-radius: 8px; background: #2b3242; color: #e6e9ef; font-size: 13px; box-shadow: 0 2px 10px rgba(0,0,0,.35); }
+.shell-notice span { flex: 1; }

@@ -75,6 +75,7 @@ fn main() {
             commands::project_set_mail,
             commands::new_session,
             commands::open_login_help,
+            commands::shell_info,
             commands::open_path,
             commands::resolve_preview_path,
             commands::tts_speak,
@@ -84,6 +85,7 @@ fn main() {
             updater::install_update,
         ])
         .setup(|app| {
+            point_at_bundled_busybox(app);
             #[cfg(target_os = "linux")]
             allow_webkit_media_permissions(app);
             Ok(())
@@ -115,4 +117,21 @@ fn allow_webkit_media_permissions(app: &tauri::App) {
             true
         });
     });
+}
+
+/// Windows without Git for Windows has no bash; the installer ships
+/// busybox.exe as a resource so commands work right after install. Tell
+/// kotonia-cli where it is (it looks next to its own exe otherwise, which for
+/// the desktop is not where Tauri puts resources).
+fn point_at_bundled_busybox(app: &tauri::App) {
+    use tauri::Manager;
+    if std::env::var_os("KOTONIA_BUSYBOX").is_some() {
+        return;
+    }
+    if let Ok(dir) = app.path().resource_dir() {
+        let bb = dir.join("busybox.exe");
+        if bb.is_file() {
+            std::env::set_var("KOTONIA_BUSYBOX", bb);
+        }
+    }
 }
