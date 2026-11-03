@@ -21,6 +21,7 @@
         <span class="workspace-btn-label">workspace:</span>
         <span id="workspace-path" class="workspace-btn-path">…</span>
       </button>
+      <button id="btn-memory" type="button" title="この作業フォルダの記憶と、使ってよいメール">記憶</button>
       <select id="engine-select" title="エージェントエンジンを切替 (変更時は自動で新セッション)">
         <option value="react" selected>Eve (kotonia ReAct)</option>
         <option value="claude-code">Claude Code (headless)</option>
@@ -176,6 +177,24 @@
       <ul id="home-sites" class="home-list"></ul>
       <div class="modal-actions">
         <button id="home-close" type="button" class="btn-deny">閉じる</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="memory-modal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-body home-modal-body">
+      <h2>記憶</h2>
+      <p id="memory-folder" class="home-status-line"></p>
+      <h3>このフォルダについて (MEMORY.md)</h3>
+      <textarea id="memory-folder-text" class="memory-text" rows="8" spellcheck="false"></textarea>
+      <h3>あなたについて (USER.md、すべてのフォルダで共通)</h3>
+      <textarea id="memory-user-text" class="memory-text" rows="5" spellcheck="false"></textarea>
+      <h3>このフォルダで読んでよいメール</h3>
+      <ul id="memory-mail" class="home-list"></ul>
+      <p class="memory-note">変更は次の会話から反映されます。メールの許可は、このフォルダだけに効きます。</p>
+      <div class="modal-actions">
+        <button id="memory-close" type="button" class="btn-deny">閉じる</button>
+        <button id="memory-save" type="button" class="btn-approve">保存</button>
       </div>
     </div>
   </div>

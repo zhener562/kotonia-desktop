@@ -786,3 +786,8 @@ body {
 .home-feed .kind-error, .home-feed .kind-approval_needed { opacity: 0.75; }
 .home-list li { padding: 2px 0; }
 .home-badge[hidden] { display: none; }
+
+/* memory modal */
+.memory-text { width: 100%; box-sizing: border-box; font: 13px/1.5 ui-monospace, monospace; resize: vertical; }
+.memory-note { font-size: 12px; opacity: 0.7; margin: 10px 0 0; }
+.memory-mail-row { display: flex; gap: 8px; align-items: center; }

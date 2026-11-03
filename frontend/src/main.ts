@@ -1758,6 +1758,90 @@ listen('approval_request', (msg) => {
   if (msg.payload) showApproval(msg.payload);
 });
 
+// ── this folder's memory ─────────────────────────────────────────────
+// kotonia-cli keeps notes per work folder (~/.kotonia/projects) and shares
+// USER.md across folders. The agent writes them through its `memory` tool;
+// here the user reads and corrects them, and decides which mail accounts
+// the agent may read in this folder.
+
+const btnMemory = element<HTMLButtonElement>('btn-memory');
+const memoryModal = element<HTMLDivElement>('memory-modal');
+const memoryFolder = element<HTMLParagraphElement>('memory-folder');
+const memoryFolderText = element<HTMLTextAreaElement>('memory-folder-text');
+const memoryUserText = element<HTMLTextAreaElement>('memory-user-text');
+const memoryMail = element<HTMLUListElement>('memory-mail');
+const memoryClose = element<HTMLButtonElement>('memory-close');
+const memorySave = element<HTMLButtonElement>('memory-save');
+
+function renderMemoryMail(accounts: { id: string; email: string }[], allowed: string[]) {
+  if (!accounts.length) {
+    memoryMail.replaceChildren(
+      Object.assign(document.createElement('li'), {
+        textContent: 'つながっているメールはありません (ホームモードの会話で頼まれたときに連携できます)',
+      }),
+    );
+    return;
+  }
+  memoryMail.replaceChildren(
+    ...accounts.map((a) => {
+      const li = document.createElement('li');
+      const label = document.createElement('label');
+      label.className = 'memory-mail-row';
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.checked = allowed.includes(a.id);
+      box.addEventListener('change', async () => {
+        try {
+          await invoke('project_set_mail', {
+            workspacePath: currentWorkspace,
+            connector: a.id,
+            allow: box.checked,
+          });
+          appendLog('info', box.checked
+            ? `このフォルダで ${a.email} のメールを読めるようにしました (次の会話から)`
+            : `このフォルダから ${a.email} のメールを外しました (次の会話から)`);
+        } catch (e) {
+          box.checked = !box.checked;
+          appendLog('error', 'メールの許可を変更できません: ' + String(e));
+        }
+      });
+      label.append(box, document.createTextNode(a.email));
+      li.append(label);
+      return li;
+    }),
+  );
+}
+
+async function openMemory() {
+  try {
+    const st = await invoke('project_status', { workspacePath: currentWorkspace });
+    memoryFolder.textContent = `フォルダ: ${st.root}`;
+    memoryFolder.title = `保存先: ${st.dir}`;
+    memoryFolderText.value = st.memory;
+    memoryUserText.value = st.user;
+    renderMemoryMail(st.mail_accounts, st.mail_allowed);
+    memoryModal.classList.remove('hidden');
+  } catch (e) {
+    appendLog('error', '記憶を読めません: ' + String(e));
+  }
+}
+
+btnMemory.addEventListener('click', () => { void openMemory(); });
+memoryClose.addEventListener('click', () => memoryModal.classList.add('hidden'));
+memorySave.addEventListener('click', async () => {
+  try {
+    await invoke('project_save', {
+      workspacePath: currentWorkspace,
+      memory: memoryFolderText.value,
+      user: memoryUserText.value,
+    });
+    memoryModal.classList.add('hidden');
+    appendLog('info', '記憶を保存しました (次の会話から反映されます)');
+  } catch (e) {
+    appendLog('error', '記憶を保存できません: ' + String(e));
+  }
+});
+
 // ── home mode (resident agent) ──────────────────────────────────────
 // Mirrors kotonia-cli's `--home` + `home run`: memory files and connectors
 // in the session prompt, the heartbeat running while the app is open, and

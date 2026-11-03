@@ -891,6 +891,102 @@ pub async fn respond_site(
     }
 }
 
+// ── this folder's memory (kotonia-cli `project`) ─────────────────────
+
+#[derive(Serialize)]
+pub struct MailAccount {
+    pub id: String,
+    pub email: String,
+}
+
+#[derive(Serialize)]
+pub struct ProjectStatus {
+    /// The folder the memory belongs to (a repo's main root, not a worktree).
+    pub root: String,
+    pub dir: String,
+    pub memory: String,
+    /// The home USER.md, shared by every folder.
+    pub user: String,
+    pub mail_allowed: Vec<String>,
+    pub mail_accounts: Vec<MailAccount>,
+}
+
+fn project_for(
+    workspace_path: Option<&str>,
+) -> Result<kotonia_cli::project::ProjectMemory, String> {
+    let root = resolve_workspace(workspace_path)?;
+    kotonia_cli::project::ProjectMemory::resolve(&root)
+}
+
+#[tauri::command]
+pub async fn project_status(workspace_path: Option<String>) -> Result<ProjectStatus, String> {
+    let memory = project_for(workspace_path.as_deref())?;
+    let user = HomeDir::resolve()?.read("USER.md").unwrap_or_default();
+    let mail_accounts = kotonia_cli::connectors::Registry::load()
+        .unwrap_or_default()
+        .connectors
+        .values()
+        .filter_map(|c| match &c.kind {
+            kotonia_cli::connectors::ConnectorKind::Imap { email, .. } => Some(MailAccount {
+                id: c.id.clone(),
+                email: email.clone(),
+            }),
+            _ => None,
+        })
+        .collect();
+    Ok(ProjectStatus {
+        root: memory.root().display().to_string(),
+        dir: memory.dir().display().to_string(),
+        memory: memory.read("MEMORY.md").unwrap_or_default(),
+        user,
+        mail_allowed: memory.mail_grants(),
+        mail_accounts,
+    })
+}
+
+/// Save what the user typed. People edit their own memory freely (no
+/// length cap — the cap in the `memory` tool is for the agent). Files that
+/// did not change are left alone.
+#[tauri::command]
+pub async fn project_save(
+    workspace_path: Option<String>,
+    memory: String,
+    user: String,
+) -> Result<(), String> {
+    let project = project_for(workspace_path.as_deref())?;
+    let write = |path: PathBuf, body: &str| -> Result<(), String> {
+        let current = std::fs::read_to_string(&path).unwrap_or_default();
+        if current.trim_end() == body.trim_end() {
+            return Ok(());
+        }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("create {}: {e}", parent.display()))?;
+        }
+        let text = if body.trim().is_empty() {
+            String::new()
+        } else {
+            format!("{}\n", body.trim_end())
+        };
+        std::fs::write(&path, text).map_err(|e| format!("write {}: {e}", path.display()))
+    };
+    write(project.dir().join("MEMORY.md"), &memory)?;
+    project.note_root();
+    write(HomeDir::resolve()?.path("USER.md"), &user)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn project_set_mail(
+    workspace_path: Option<String>,
+    connector: String,
+    allow: bool,
+) -> Result<Vec<String>, String> {
+    let project = project_for(workspace_path.as_deref())?;
+    project.set_mail_grant(&connector, allow)?;
+    Ok(project.mail_grants())
+}
+
 #[derive(Serialize)]
 pub struct HomeStatus {
     pub dir: String,
