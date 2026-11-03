@@ -45,9 +45,8 @@ jobs:
           # Pin the dependency so rerunning a desktop tag reproduces the
           # original binary. Update this tag intentionally when taking a new
           # kotonia-cli release into kotonia-desktop.
-          # v0.1.13 — per-folder memory + shared USER.md, memory tool,
-          # per-folder mail grants, edit_file.
-          ref: feat/windows-busybox  # TEMP: swap to v0.1.14 before release
+          # v0.1.14 — busybox fallback on Windows, telemetry runs for embedders.
+          ref: v0.1.14
           path: kotonia-cli
 
       - name: Install Node.js
