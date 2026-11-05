@@ -99,7 +99,7 @@ The browser integration test lives in the sibling `kotonia-cli` repository:
 `cargo test --lib chromium_round_trip -- --ignored --nocapture`. It uses real
 headless Chrome against localhost. Desktop frontend checks: `npm test`.
 
-Release order: publish `kotonia-cli v0.1.15` first, then build/release Desktop.
+Release order: publish `kotonia-cli v0.1.16` first, then build/release Desktop.
 The desktop workflow pins that CLI tag, and its lockfile records the same version.
 
 ## Prerequisites
