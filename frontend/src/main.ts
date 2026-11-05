@@ -119,6 +119,24 @@ let pendingApprovalId = null;
 // button between "send" and "cancel" so the user can stop a runaway
 // agent without restarting the app.
 let activeTaskId = null;
+const browserStatus = element<HTMLDivElement>('browser-status');
+const browserStatusLabel = element<HTMLElement>('browser-status-label');
+const browserStatusPage = element<HTMLSpanElement>('browser-status-page');
+const browserTakeover = element<HTMLButtonElement>('browser-takeover');
+
+async function takeOverBrowser() {
+  browserTakeover.disabled = true;
+  try {
+    if (!(await cancelActiveTask())) return;
+    browserStatusLabel.textContent = '手動操作中';
+    appendLog('info', 'ブラウザ操作を引き継ぎました。別ウィンドウで操作し、会話で「続けて」と伝えてください。');
+    promptInput.focus();
+  } finally {
+    browserTakeover.disabled = false;
+  }
+}
+browserTakeover.addEventListener('click', takeOverBrowser);
+element<HTMLButtonElement>('approval-takeover').addEventListener('click', takeOverBrowser);
 // Engine the active sessionId was created with. Stays in sync with
 // engineSelect.value when the user starts a new session; if they flip the
 // selector mid-conversation we discard the old session so the new engine
@@ -302,6 +320,7 @@ async function pickWorkspace() {
       'session-new',
       `workspace switched → starting a new session.`,
     );
+    if (!(await releaseSessionBrowser())) return;
     sessionId = null;
     sessionEngine = null;
     sessionWorkspace = null;
@@ -421,7 +440,20 @@ async function ensureSession() {
   return sessionId;
 }
 
+async function releaseSessionBrowser(): Promise<boolean> {
+  if (activeTaskId && !(await cancelActiveTask())) return false;
+  try {
+    if (sessionId) await invoke('close_browser', { sessionId });
+  } catch (error) {
+    appendLog('error', 'ブラウザを閉じられませんでした: ' + String(error));
+    return false;
+  }
+  browserStatus.hidden = true;
+  return true;
+}
+
 async function startNewSession() {
+  if (!(await releaseSessionBrowser())) return;
   sessionId = await invoke('new_session');
   sessionEngine = engineSelect.value;
   sessionWorkspace = currentWorkspace;
@@ -539,6 +571,8 @@ function showApproval(req) {
   pendingApprovalId = req.approval_id;
   approvalReason.textContent = req.reason || '';
   approvalCommand.textContent = req.command || '';
+  element<HTMLButtonElement>('approval-takeover').hidden = browserStatus.hidden ||
+    !(req.command || '').startsWith('browser ');
   approvalModal.classList.remove('hidden');
 }
 
@@ -593,6 +627,7 @@ async function submitTask() {
       'session-new',
       `engine switched ${sessionEngine} → ${engineSelect.value}; starting a new session.`,
     );
+    if (!(await releaseSessionBrowser())) return;
     sessionId = null;
     sessionEngine = null;
     sessionWorkspace = null;
@@ -636,25 +671,33 @@ function setActiveTask(taskId) {
   } else {
     promptSubmit.textContent = '送信';
     promptSubmit.classList.remove('cancel-mode');
+    if (!browserStatus.hidden) browserStatusLabel.textContent = 'ブラウザ・待機中';
   }
 }
 
 async function cancelActiveTask() {
-  if (!activeTaskId) return;
+  if (!activeTaskId) return true;
   const tid = activeTaskId;
   // Optimistically reset UI; an aborted tokio task won't emit `done`,
   // so we can't wait for backend confirmation to flip back.
   setActiveTask(null);
   try {
     const wasRunning = await invoke('cancel_task', { taskId: tid });
+    pendingApprovalId = null;
+    approvalModal.classList.add('hidden');
+    connectorModal.classList.add('hidden');
+    siteModal.classList.add('hidden');
     appendLog(
       'session-new',
       wasRunning
         ? `■ cancelled task ${tid.slice(0, 8)}`
         : `(task ${tid.slice(0, 8)} already finished)`,
     );
+    return true;
   } catch (e) {
     appendLog('error', 'cancel: ' + String(e));
+    setActiveTask(tid);
+    return false;
   }
 }
 
@@ -713,7 +756,7 @@ profileResetPrompt.addEventListener('click', () => {
 profilePickImage.addEventListener('click', () => {
   pickProfileImage().catch((e) => appendLog('error', 'profile image: ' + String(e)));
 });
-profileForm.addEventListener('submit', (event) => {
+profileForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   const previousPrompt = `${profile.systemPrompt}\n${profile.persona}`;
   profile = {
@@ -731,6 +774,7 @@ profileForm.addEventListener('submit', (event) => {
   profileModal.classList.add('hidden');
   applyProfile();
   if (sessionId && previousPrompt !== `${profile.systemPrompt}\n${profile.persona}`) {
+    if (!(await releaseSessionBrowser())) return;
     sessionId = null;
     sessionEngine = null;
     sessionWorkspace = null;
@@ -1659,6 +1703,17 @@ listen('agent_event', (msg) => {
   const ev = msg.payload?.event;
   if (!ev) return;
   switch (ev.kind) {
+    case 'browser': {
+      // Ignore late browser events from a task that the user has stopped.
+      if (msg.payload?.task_id !== activeTaskId) break;
+      browserStatus.hidden = ev.status === 'closed';
+      browserStatusLabel.textContent = ev.status === 'running'
+        ? `ブラウザ・${ev.action} 実行中`
+        : ev.status === 'error' ? 'ブラウザ・確認が必要' : 'ブラウザ';
+      browserStatusPage.textContent = [ev.title, ev.url].filter(Boolean).join(' — ');
+      appendLog(ev.error ? 'error' : 'info', `[browser ${ev.action}: ${ev.status}] ${ev.title || ''} ${ev.url || ''}${ev.error ? '\n' + ev.error : ''}`);
+      break;
+    }
     case 'iteration_start':
       appendLog('iter', `── iter ${ev.iteration}/${ev.max} ──`);
       // New iteration = new turn boundary. Drop any leftover streamed

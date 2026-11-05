@@ -28,18 +28,22 @@ pub type SessionRegistry = RwLock<HashMap<String, Arc<AsyncMutex<SessionState>>>
 /// command takes the sender back out and resolves it.
 pub type PendingApprovals = Arc<StdMutex<HashMap<String, std::sync::mpsc::Sender<bool>>>>;
 
-/// Map of `task_id → AbortHandle` for the currently-running tokio task
-/// of each submitted prompt. `cancel_task` looks up by id and aborts;
-/// the cleanup task (spawned alongside the work) removes entries on
-/// natural completion. AbortHandle (not JoinHandle) so multiple owners
-/// can hold it without the `!Clone` headache.
-pub type RunningTasks = Arc<StdMutex<HashMap<String, AbortHandle>>>;
+/// Handles for one running prompt. The flag wakes synchronous approval
+/// waiters; the abort handle stops async model/tool work. Completion removes
+/// the task from `RunningTasks`.
+pub struct RunningTask {
+    pub abort: AbortHandle,
+    pub cancelled: Arc<std::sync::atomic::AtomicBool>,
+}
+
+pub type RunningTasks = Arc<StdMutex<HashMap<String, RunningTask>>>;
 
 /// A connector card waiting for the user: `Some(values)` when they filled it,
 /// `None` when they cancelled. The values include the secret, which goes
 /// straight from here into the vault — never into an event or a log.
 pub type ConnectorReply = Option<std::collections::BTreeMap<String, String>>;
-pub type PendingConnectors = Arc<StdMutex<HashMap<String, std::sync::mpsc::Sender<ConnectorReply>>>>;
+pub type PendingConnectors =
+    Arc<StdMutex<HashMap<String, std::sync::mpsc::Sender<ConnectorReply>>>>;
 
 /// "Open this unfamiliar site?" waiting for `once` / `always` / `deny`.
 pub type PendingSites = Arc<StdMutex<HashMap<String, std::sync::mpsc::Sender<String>>>>;

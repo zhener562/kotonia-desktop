@@ -32,6 +32,30 @@ body {
   flex-direction: column;
 }
 
+.browser-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+}
+
+.browser-status[hidden] { display: none; }
+.browser-status-copy { flex: 1; min-width: 0; }
+.browser-status-copy strong { color: var(--accent); margin-right: 10px; }
+.browser-status-copy span { overflow-wrap: anywhere; }
+.browser-status-copy small { display: block; color: var(--fg-dim); margin-top: 3px; }
+.browser-status button {
+  flex-shrink: 0;
+  background: var(--bg-elev-2);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
 .top-bar {
   display: flex;
   align-items: center;

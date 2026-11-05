@@ -41,6 +41,15 @@
     </div>
   </header>
 
+  <div id="browser-status" class="browser-status" hidden aria-live="polite">
+    <div class="browser-status-copy">
+      <strong id="browser-status-label">ブラウザ</strong>
+      <span id="browser-status-page"></span>
+      <small>別ウィンドウで操作を確認できます。ログインはブラウザで行い、会話で「続けて」と伝えてください。</small>
+    </div>
+    <button id="browser-takeover" type="button">操作を引き継ぐ</button>
+  </div>
+
   <div id="app-shell" class="app-shell">
     <main class="log-pane" id="log" aria-live="polite"></main>
     <aside id="preview-pane" class="preview-pane hidden">
@@ -123,6 +132,7 @@
       <p class="approval-reason" id="approval-reason"></p>
       <pre class="approval-command" id="approval-command"></pre>
       <div class="modal-actions">
+        <button id="approval-takeover" type="button">中止して自分で操作</button>
         <button id="approval-deny" type="button" class="btn-deny">拒否</button>
         <button id="approval-approve" type="button" class="btn-approve">承認</button>
       </div>

@@ -72,6 +72,36 @@ cargo tauri dev   # TypeScript frontend is compiled automatically
 Not yet shipped: model selector, the hosted `/chat/personas` catalog,
 kotonia.ai webview, and session GC.
 
+## Browser tasks
+
+With the Eve / Kotonia ReAct engine selected, ask something like
+「ブラウザでこのサイトを開いて、条件に合う候補を調べて」. The agent opens a
+separate visible Chrome/Chromium/Edge window and can read pages, click, type,
+scroll, switch tabs and inspect screenshots. Install one of those browsers;
+if detection fails, set `KOTONIA_BROWSER_PATH` to its executable before launch.
+No additional automation runtime or cloud browser account is needed.
+
+Browser activity appears above the conversation log. 「操作を引き継ぐ」 stops
+the current task and leaves the window open for you. Enter logins, CAPTCHA and
+verification codes directly there, then say 「続けて」 in the same conversation.
+The agent reads fresh state before continuing. The approval dialog also offers
+「中止して自分で操作」 for browser actions, and cancellation releases pending
+approval waits so a following turn can run.
+
+The initial implementation asks before navigation, clicks, typing and key
+presses. Closing the browser or starting a new session discards its temporary
+profile/logins; the ordinary browser profile is untouched. Switching workspace,
+engine, home mode or profile prompt also closes the old session's browser.
+Page contents and ordinary input values enter the configured LLM's context.
+Background heartbeat and the Claude Code engine do not get these browser tools.
+
+The browser integration test lives in the sibling `kotonia-cli` repository:
+`cargo test --lib chromium_round_trip -- --ignored --nocapture`. It uses real
+headless Chrome against localhost. Desktop frontend checks: `npm test`.
+
+Release order: publish `kotonia-cli v0.1.15` first, then build/release Desktop.
+The desktop workflow pins that CLI tag, and its lockfile records the same version.
+
 ## Prerequisites
 
 ### Linux dev deps

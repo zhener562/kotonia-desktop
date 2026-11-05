@@ -14,8 +14,8 @@ use kotonia_cli::agent::provider::Provider;
 use kotonia_cli::agent::worktree::AgentWorkspace;
 
 use crate::bridge::{TauriApprovalHandler, TauriEventSink};
+use crate::state::{AppState, RunningTask, SessionState};
 use kotonia_cli::home::workspace::HomeDir;
-use crate::state::{AppState, SessionState};
 
 /// Default model alias. Resolves through kotonia-cli's provider registry to
 /// the hosted `/api/v1/chat/completions` endpoint, authenticating with the
@@ -327,6 +327,8 @@ pub async fn submit_task(
     let pending_sites = state.pending_sites.clone();
     let app_for_spawn = app.clone();
     let task_id_for_spawn = task_id.clone();
+    let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let cancelled_for_spawn = cancelled.clone();
 
     let work = tokio::spawn(async move {
         let mut sink = TauriEventSink {
@@ -339,6 +341,7 @@ pub async fn submit_task(
             pending,
             pending_connectors,
             pending_sites,
+            cancelled: cancelled_for_spawn,
         };
 
         let mut guard = session.lock().await;
@@ -375,7 +378,7 @@ pub async fn submit_task(
         .running_tasks
         .lock()
         .unwrap()
-        .insert(task_id.clone(), abort);
+        .insert(task_id.clone(), RunningTask { abort, cancelled });
     let running_for_cleanup = state.running_tasks.clone();
     let task_id_for_cleanup = task_id.clone();
     tokio::spawn(async move {
@@ -430,11 +433,26 @@ mod profile_tests {
 }
 
 #[tauri::command]
+pub async fn close_browser(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
+    let session = state.sessions.read().await.get(&session_id).cloned();
+    if let Some(session) = session {
+        let mut guard = session.lock().await;
+        if let DispatchAgent::ReAct(agent) = &mut guard.agent {
+            agent.close_browser().await;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn cancel_task(state: State<'_, AppState>, task_id: String) -> Result<bool, String> {
     let removed = state.running_tasks.lock().unwrap().remove(&task_id);
     match removed {
         Some(handle) => {
-            handle.abort();
+            handle
+                .cancelled
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            handle.abort.abort();
             Ok(true)
         }
         // Not an error — the task likely already finished between the
@@ -806,8 +824,9 @@ async fn get_or_create_session(
                 let dir = HomeDir::resolve()?;
                 dir.ensure_initialized()?;
                 let prefix = kotonia_cli::home::conversation_prefix(&dir);
-                agent_config.persona_prefix =
-                    agent_config.persona_prefix.map(|p| format!("{prefix}\n\n{p}"));
+                agent_config.persona_prefix = agent_config
+                    .persona_prefix
+                    .map(|p| format!("{prefix}\n\n{p}"));
                 agent_config.connectors = true;
             }
             DispatchAgent::ReAct(Agent::new(&workspace.root, provider, agent_config))
@@ -889,7 +908,6 @@ mod tests {
         );
     }
 }
-
 
 // ── home mode (resident agent) ─────────────────────────────────────────
 

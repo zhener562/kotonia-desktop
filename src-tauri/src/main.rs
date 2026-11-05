@@ -63,6 +63,7 @@ fn main() {
             commands::persona_info,
             commands::submit_task,
             commands::cancel_task,
+            commands::close_browser,
             commands::respond_approval,
             commands::respond_connector,
             commands::respond_site,

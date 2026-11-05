@@ -45,8 +45,9 @@ jobs:
           # Pin the dependency so rerunning a desktop tag reproduces the
           # original binary. Update this tag intentionally when taking a new
           # kotonia-cli release into kotonia-desktop.
-          # v0.1.14 — busybox fallback on Windows, telemetry runs for embedders.
-          ref: v0.1.14
+          # v0.1.15 — native interactive browser and session browser cleanup.
+          # Publish the CLI tag before building/releasing this desktop version.
+          ref: v0.1.15
           path: kotonia-cli
 
       - name: Install Node.js
