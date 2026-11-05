@@ -27,6 +27,7 @@
         <option value="claude-code">Claude Code (headless)</option>
       </select>
       <button id="btn-new-session" type="button" title="新しいセッション">新規</button>
+      <button id="btn-history" type="button">履歴</button>
       <button id="btn-clear-log" type="button" title="ログをクリア">クリア</button>
       <button id="btn-mic" type="button" title="マイクで吹き込んで prompt 欄に転写 (Esc キャンセル)"><span id="btn-mic-icon">🎙️</span><span id="btn-mic-label">&nbsp;mic</span></button>
       <select id="output-mode" title="応答モードを切替">
@@ -35,6 +36,8 @@
         <option value="avatar">Avatar</option>
       </select>
       <button id="btn-profile" type="button" title="システムプロンプト・人格・顔画像を設定">Profile</button>
+      <button id="btn-voice-settings" type="button">声</button>
+      <button id="btn-stop-speech" type="button" hidden>音声停止</button>
       <button id="btn-home-toggle" type="button" title="記憶ファイル・メールなどのつながり・定期チェックを使う (切り替えると新しいセッション)">🏠 ホーム: オフ</button>
       <button id="btn-home-panel" type="button" title="定期チェックの結果と設定" hidden>フィード<span id="home-badge" class="home-badge" hidden></span></button>
       <button id="btn-toggle-preview" type="button" title="プレビューペイン表示切替" hidden>▶ プレビュー</button>
@@ -123,6 +126,62 @@
         <button id="profile-cancel" type="button" class="btn-deny">キャンセル</button>
         <button type="submit" class="btn-approve">保存</button>
       </div>
+    </form>
+  </div>
+
+  <div id="history-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="history-title">
+    <div class="modal-body history-modal-body">
+      <h2 id="history-title">会話の履歴</h2>
+      <input id="history-search" type="search" placeholder="会話・キャラ・作業フォルダを検索" aria-label="履歴を検索">
+      <p id="history-status" role="status"></p>
+      <div id="history-list" class="history-list"></div>
+      <div class="modal-actions">
+        <button id="history-refresh" type="button">再読み込み</button>
+        <button id="history-close" type="button">閉じる</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="voice-settings-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="voice-settings-title">
+    <form id="voice-settings-form" class="modal-body voice-settings-body">
+      <h2 id="voice-settings-title">声の設定</h2>
+      <p class="voice-hint">音声とAvatarに同じ声を使います。過去の発言は、当時の声でも現在の声でも再生できます。</p>
+      <label class="profile-field">音声エンジン<select id="voice-engine">
+        <option value="voxcpm">VoxCPM2（多言語）</option>
+        <option value="irodori">Irodori（日本語）</option>
+        <option value="voicevox">VoiceVox</option>
+      </select></label>
+      <label class="profile-field">言語<select id="voice-language">
+        <option value="ja">日本語</option><option value="en">English</option><option value="zh">中文</option>
+        <option value="ko">한국어</option><option value="es">Español</option><option value="fr">Français</option>
+        <option value="de">Deutsch</option><option value="it">Italiano</option><option value="pt">Português</option>
+      </select></label>
+      <div id="voice-reference-fields">
+        <label class="profile-field">登録済みの声<select id="voice-reference"><option value="">声の特徴から生成</option></select></label>
+        <div class="voice-actions"><button id="voice-reload" type="button">一覧を更新</button><button id="voice-sample" type="button">選んだ声を試聴</button></div>
+        <p class="voice-hint">同じ声を使い続けるには、登録済みの声を選ぶか、候補を作って採用してください。</p>
+        <label class="profile-field">声の特徴（ボイスデザイン）<textarea id="voice-description" rows="3" placeholder="落ち着いた成人女性の中低音。柔らかく明瞭な声。"></textarea></label>
+        <label class="profile-field">声色シード（空欄でランダム）<input id="voice-seed" type="number" step="1" min="0" max="2147483647"></label>
+        <button id="voice-seed-roll" type="button">シードを変える</button>
+        <label class="profile-field">作った声の名前<input id="voice-label" type="text" maxlength="100"></label>
+        <button id="voice-make-candidates" type="button">声の候補を3つ作る</button>
+        <div id="voice-candidates" class="voice-candidates"></div>
+      </div>
+      <div id="voicevox-fields" hidden>
+        <label class="profile-field">話者・スタイル<select id="voicevox-speaker"></select></label>
+        <button id="voicevox-reload" type="button">話者を読み込む</button>
+      </div>
+      <label class="profile-field">速度（0.5〜2.0）<input id="voice-speed" type="number" min="0.5" max="2" step="0.05"></label>
+      <div id="irodori-reading-fields" hidden>
+        <label class="voice-checkbox"><input id="voice-readings-enabled" type="checkbox">英語表記を日本語の読みに置き換える</label>
+        <p class="voice-hint">GitHub → ギットハブ、API → エーピーアイなど。辞書にない語はアルファベットで読みます。本文は元の表記を保ちます。</p>
+        <label class="profile-field">自分の読み辞書（1行に「英語表記=読み」）<textarea id="voice-reading-overrides" rows="5" placeholder="MyTool=マイツール&#10;Eve=イヴ" spellcheck="false"></textarea></label>
+      </div>
+      <label class="profile-field">試しに読む文章<textarea id="voice-test-text" rows="2">GitHubのAPIを確認しました。Kotonia Desktopでお話ししましょう。</textarea></label>
+      <div class="voice-actions"><button id="voice-preview-reading" type="button">読みを確認</button><button id="voice-test-play" type="button">この設定で試聴</button></div>
+      <pre id="voice-reading-preview" class="reading-preview" hidden></pre>
+      <p id="voice-settings-status" role="status"></p>
+      <div class="modal-actions"><button id="voice-settings-close" type="button">閉じる</button><button type="submit" class="btn-approve">保存</button></div>
     </form>
   </div>
 

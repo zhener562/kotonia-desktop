@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use tokio::sync::{Mutex as AsyncMutex, RwLock};
@@ -38,6 +38,37 @@ pub struct RunningTask {
 
 pub type RunningTasks = Arc<StdMutex<HashMap<String, RunningTask>>>;
 
+#[derive(Default)]
+pub struct SpeechTasks {
+    pub running: HashMap<String, AbortHandle>,
+    // A stop can reach Rust before the corresponding launch has been polled.
+    // Remember a bounded set of client IDs so that launch cannot resurrect it.
+    cancelled: VecDeque<String>,
+}
+
+impl SpeechTasks {
+    pub fn cancel(&mut self, id: Option<String>) {
+        for (_, handle) in self.running.drain() {
+            handle.abort();
+        }
+        if let Some(id) = id {
+            self.cancelled.push_back(id);
+            while self.cancelled.len() > 256 {
+                self.cancelled.pop_front();
+            }
+        }
+    }
+
+    pub fn was_cancelled(&mut self, id: &str) -> bool {
+        if let Some(index) = self.cancelled.iter().position(|cancelled| cancelled == id) {
+            self.cancelled.remove(index);
+            true
+        } else {
+            false
+        }
+    }
+}
+
 /// A connector card waiting for the user: `Some(values)` when they filled it,
 /// `None` when they cancelled. The values include the secret, which goes
 /// straight from here into the vault — never into an event or a log.
@@ -52,6 +83,7 @@ pub struct AppState {
     pub sessions: Arc<SessionRegistry>,
     pub pending_approvals: PendingApprovals,
     pub running_tasks: RunningTasks,
+    pub speech_tasks: Arc<StdMutex<SpeechTasks>>,
     /// Last authoritative server result for the paired device token.
     /// Transient network failures leave this unchanged so an offline user
     /// is not incorrectly shown as logged out.
@@ -72,11 +104,28 @@ impl AppState {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             pending_approvals: Arc::new(StdMutex::new(HashMap::new())),
             running_tasks: Arc::new(StdMutex::new(HashMap::new())),
+            speech_tasks: Arc::new(StdMutex::new(SpeechTasks::default())),
             auth_invalid: std::sync::atomic::AtomicBool::new(false),
             avatar_ready: AsyncMutex::new(false),
             pending_connectors: Arc::new(StdMutex::new(HashMap::new())),
             pending_sites: Arc::new(StdMutex::new(HashMap::new())),
             home_runner: StdMutex::new(None),
         }
+    }
+}
+
+#[cfg(test)]
+mod speech_tests {
+    use super::*;
+    #[test]
+    fn stopping_before_launch_prevents_the_same_stream_from_starting() {
+        let mut tasks = SpeechTasks::default();
+        tasks.cancel(Some("not-started-yet".into()));
+        assert!(tasks.was_cancelled("not-started-yet"));
+        assert!(!tasks.was_cancelled("another-stream"));
+        for i in 0..1000 {
+            tasks.cancel(Some(format!("old-{i}")));
+        }
+        assert!(tasks.cancelled.len() <= 256);
     }
 }

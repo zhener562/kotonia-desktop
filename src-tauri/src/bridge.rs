@@ -19,13 +19,58 @@ use crate::state::{ConnectorReply, PendingApprovals, PendingConnectors, PendingS
 pub struct TauriEventSink {
     pub app: AppHandle,
     pub task_id: String,
+    pub session_id: String,
+    pub voice: crate::speech::VoiceConfig,
+    pub streamed_text: String,
 }
 
 impl EventSink for TauriEventSink {
     fn emit(&mut self, event: Event) {
+        let mut saved = None;
+        match &event {
+            Event::IterationStart { .. } => self.streamed_text.clear(),
+            Event::Text { text } => {
+                if !self.streamed_text.is_empty() {
+                    self.streamed_text.push_str("\n\n");
+                }
+                self.streamed_text.push_str(text);
+            }
+            Event::Final { answer } => {
+                let text = if answer.trim().is_empty() {
+                    &self.streamed_text
+                } else {
+                    answer
+                };
+                match crate::history::append_response(&self.session_id, text, &self.voice) {
+                    Ok(message) => saved = Some(message),
+                    Err(error) => {
+                        // A persistence error must be visible, but must not
+                        // discard the result of an already executed task.
+                        let _ = self.app.emit(
+                            "history_error",
+                            serde_json::json!({"session_id": self.session_id, "message": error}),
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+        let mut wire = serde_json::to_value(WireEvent::from_event(event)).unwrap();
+        if wire["kind"] == "final" {
+            wire["voice"] = serde_json::to_value(&self.voice).unwrap();
+            if let Some(message) = saved {
+                wire["message"] = serde_json::to_value(message).unwrap();
+            } else {
+                let text = wire["answer"]
+                    .as_str()
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or(&self.streamed_text);
+                wire["response"] = serde_json::to_value(crate::response::normalize(text)).unwrap();
+            }
+        }
         let payload = serde_json::json!({
             "task_id": self.task_id,
-            "event": WireEvent::from_event(event),
+            "event": wire,
         });
         let _ = self.app.emit("agent_event", payload);
     }

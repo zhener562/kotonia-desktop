@@ -15,8 +15,6 @@ pub struct Persona {
     pub display_name: &'static str,
     pub tagline: &'static str,
     pub avatar_url: &'static str,
-    pub system_prompt: &'static str,
-    pub voice: VoiceConfig,
     /// Ditto avatar id used by `/api/v1/avatars/{avatar_id}/speech`.
     /// On first launch the app POSTs the persona's still image to
     /// `/api/v1/avatars` under this id; subsequent talk-mode
@@ -29,50 +27,6 @@ pub struct Persona {
     pub avatar_png: &'static [u8],
 }
 
-/// TTS request shape used by `/api/v1/audio/speech`. The voice runs on
-/// VoxCPM2 — the multilingual, Voice Design-driven engine on the kotonia.ai
-/// backend (Qwen3-TTS was retired on 2026-08-10 and its alias routes to
-/// VoxCPM2). Future fallback to Irodori / VoiceVox can be added by
-/// switching on `engine`.
-pub struct VoiceConfig {
-    pub engine: &'static str,
-    /// VoxCPM2 Voice Design: a short natural-language description of the
-    /// voice. `/api/v1/audio/speech` maps the wire `voice` field to the
-    /// backend's `design` for voxcpm; for voicevox this holds the numeric
-    /// speaker id as a string instead.
-    pub speaker: &'static str,
-    pub language: &'static str,
-    pub speed: f32,
-    /// Base vocal-acting instruction anchoring the persona's default
-    /// register. Merged *ahead* of any per-turn direction the model emits
-    /// via a `{{VOICE: ...}}` marker (see `merged_instruct`). Kept minimal
-    /// — Eve's voice identity comes from the Voice Design (`speaker`), so
-    /// the per-turn direction is what actually moves the delivery.
-    /// VoxCPM2 forwards `instruct`; Irodori and VoiceVox ignore it.
-    pub base_instruct: &'static str,
-}
-
-impl VoiceConfig {
-    /// Compose the VoxCPM2 `instruct` for a single utterance:
-    /// `base_instruct` followed by the optional per-turn direction extracted
-    /// from the model's `{{VOICE: ...}}` marker. Returns `None` when both are
-    /// empty so the server keeps its own default rather than being handed "".
-    ///
-    /// Mirrors the hage web client's merged-instruct pattern — a stable base
-    /// preserves voice identity while the direction is free to swing per
-    /// turn without drifting the timbre.
-    pub fn merged_instruct(&self, per_turn: Option<&str>) -> Option<String> {
-        let base = self.base_instruct.trim();
-        let dir = per_turn.map(str::trim).unwrap_or("");
-        let merged: Vec<&str> = [base, dir].into_iter().filter(|s| !s.is_empty()).collect();
-        if merged.is_empty() {
-            None
-        } else {
-            Some(merged.join(" "))
-        }
-    }
-}
-
 pub const EVE: Persona = Persona {
     key: "eve",
     display_name: "Eve",
@@ -80,22 +34,6 @@ pub const EVE: Persona = Persona {
     avatar_url: "persona/eve.png",
     avatar_id: "eve",
     avatar_png: include_bytes!("../../frontend/persona/eve.png"),
-    system_prompt: EVE_PERSONA,
-    voice: VoiceConfig {
-        engine: "voxcpm",
-        // VoxCPM2's voice comes from a natural-language Voice Design rather
-        // than a speaker preset (Qwen3-TTS and its `Ono_Anna` speaker are
-        // retired). This anchors Eve's identity: adult woman, calm low
-        // register, slow deliberate delivery. Per-turn `{{VOICE: ...}}`
-        // directions swing the emotion on top without redrawing the timbre.
-        speaker: "若い成人女性の落ち着いた低声。穏やかな中低音で柔らかな音色、ゆっくり明瞭に、抑制の効いた観測者らしい冷静な口調で話す",
-        language: "ja",
-        speed: 1.0,
-        // Empty: Eve's register rides entirely on the per-turn
-        // `{{VOICE: ...}}` direction her prompt emits. Set a light anchor
-        // here only if markerless turns start sounding flat.
-        base_instruct: "",
-    },
 };
 
 /// Default system prompt: plain and general-purpose. Shown pre-filled in the
@@ -115,18 +53,19 @@ pub const DEFAULT_SYSTEM_PROMPT: &str = "You are a capable assistant running on 
 /// and files stopped landing in the preview pane.
 pub const APP_CONTRACT: &str = "[kotonia desktop conventions — always apply]
 
-Voice direction (every final answer):
-- Start the final answer with exactly one {{VOICE: <acting direction>}}: emotion, tone, pace, pauses, volume, in a few words. It is passed to the text-to-speech engine and is never shown or read aloud. Match it to the content; do not overact.
-
-What is spoken:
-- Write the answer for the screen as usual (paths, commands, hashes and details are fine there).
-- When the answer contains code, paths, URLs, hashes, tables or multi-step procedures that are hard to follow by ear, put {{SPEAK: <one or two spoken sentences>}} right after {{VOICE}}. Only that text is read aloud; the full answer stays on screen. In it, name things by role (\"one session check\", \"the tests pass\"), not by file name, line number, command, hash or version.
-- If the answer is already short, plain conversation, omit SPEAK; the answer itself is read.
+Response format (every final answer):
+- Use the same structured response as Kotonia character chat. Put a JSON object in the final_answer tool's answer STRING, without Markdown fences:
+  {\"version\":1,\"blocks\":[{\"type\":\"speech\",\"speaker\":\"your display name\",\"text\":\"Your user-facing explanation\",\"delivery\":\"optional short acting direction\"},{\"type\":\"artifact\",\"text\":\"Paths, commands, code, tables, or detailed evidence\"}]}
+- Speech blocks are BOTH displayed and read aloud verbatim. Lead with the result in a speech block. There is no separate spoken summary: never emit SPEAK markers or a second invisible answer.
+- Artifact blocks are displayed but not automatically read. Put technical details there; keep the explanation in speech. Narration blocks may be used for unspoken scene descriptions.
+- Keep all content in the user's language. English product names are fine; the speech renderer handles engine-specific pronunciation.
+- Use delivery for tone, pace and emotion, without changing the words. Omit it when unnecessary.
+- Never drop meaningful information just to shorten audio. The app can play the complete response in order.
 
 Files and code:
 - When asked to make HTML / JS / Python / JSON / config files, write them to disk with the shell (cat > file <<'EOF' ... EOF). The user opens and runs files in the workspace directly from the side pane.
 - Do not paste whole files into the final answer. Give the absolute path and one or two sentences on what it does. Excerpts of up to three lines are fine.
-- The working directory is ~/.kotonia/desktop/workspace/ (check with pwd). HTML written there can be played with the play button.
+- Use the current working directory (check with pwd). HTML written there can be played with the play button.
 - Never paste full hashes, UUIDs, base64 or other long tokens in the final answer; refer to them by role plus the first 7 characters.";
 
 /// Eve, the original desktop character. Offered as a preset in the profile

@@ -1,12 +1,13 @@
 {
   "name": "kotonia-desktop",
   "private": true,
-  "version": "0.1.26",
+  "version": "0.1.27",
   "scripts": {
     "build:frontend": "tsc -p tsconfig.json",
     "check:frontend": "tsc --noEmit -p tsconfig.json",
     "watch:frontend": "tsc -w -p tsconfig.json",
     "test:frontend": "node --test frontend/tests/*.test.js",
+    "test:e2e": "npm run build:frontend && node --test frontend/tests/desktop-ui.e2e.cjs",
     "test": "npm run check:frontend && npm run test:frontend"
   },
   "devDependencies": {

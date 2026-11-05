@@ -3,11 +3,15 @@
 mod bridge;
 mod commands;
 mod ditto;
+mod history;
 mod persona;
+mod response;
+mod speech;
 mod state;
 mod stt;
 mod tts;
 mod updater;
+mod voices;
 
 use state::AppState;
 
@@ -75,6 +79,18 @@ fn main() {
             commands::project_save,
             commands::project_set_mail,
             commands::new_session,
+            commands::list_sessions,
+            commands::open_session,
+            commands::export_session,
+            commands::prepare_speech,
+            commands::validate_voice,
+            commands::save_session_preferences,
+            commands::cancel_speech,
+            voices::list_ref_voices,
+            voices::voice_sample,
+            voices::make_voice_candidates,
+            voices::choose_voice_candidate,
+            voices::voicevox_speakers,
             commands::open_login_help,
             commands::shell_info,
             commands::open_path,

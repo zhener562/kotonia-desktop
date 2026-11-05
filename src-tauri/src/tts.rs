@@ -1,4 +1,4 @@
-//! TTS streaming: agent text → Eve's voice in the WebView.
+//! TTS streaming: canonical speech blocks → selected voice in the WebView.
 //!
 //! Why route through Rust:
 //!   - The kotonia.ai `/api/v1/audio/speech` endpoint wants a Bearer
@@ -12,8 +12,8 @@
 //!     kotonia.ai allowlist; the Rust client has no such limit.
 //!
 //! Flow:
-//!   1. `tts_speak(text, stream_id)` POSTs to the configured TTS
-//!      endpoint with Eve's voice config.
+//!   1. `tts_speak(text, voice, stream_id)` POSTs the shared speech plan
+//!      to the configured TTS endpoint.
 //!   2. As `[len][wav]` frames arrive, we emit a `tts_chunk` Tauri
 //!      event with the base64-encoded WAV bytes and the original
 //!      `stream_id` (so the frontend can tell stale streams from the
@@ -21,17 +21,15 @@
 //!      comparing the id).
 //!   3. On clean end we emit `tts_done`, on failure `tts_error`.
 //!
-//! Cancellation: the frontend just rejects events whose `stream_id`
-//! doesn't match the current target. We don't try to abort the
-//! reqwest in-flight — the upstream response is small enough
-//! (~50KB / sentence) that letting it drain is fine.
+//! Cancellation: commands.rs owns the task AbortHandle. Stopping playback
+//! aborts this task and drops its in-flight HTTP response.
 
 use base64::Engine as _;
 use futures_util::StreamExt;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
-use crate::persona::VoiceConfig;
+use crate::speech::{self, VoiceConfig};
 
 #[derive(Serialize, Clone)]
 struct TtsChunkPayload {
@@ -55,7 +53,7 @@ pub async fn run_stream(
     stream_id: String,
     text: String,
     instruct: Option<String>,
-    voice: &'static VoiceConfig,
+    voice: VoiceConfig,
 ) {
     let cfg = match kotonia_cli::config::load() {
         Some(c) => c,
@@ -73,57 +71,10 @@ pub async fn run_stream(
 
     let server = cfg.server.trim_end_matches('/').to_string();
     let url = format!("{server}/api/v1/audio/speech");
-    if !matches!(voice.engine, "voxcpm" | "irodori" | "voicevox") {
-        let other = voice.engine;
-        let _ = app.emit(
-            "tts_error",
-            TtsErrorPayload {
-                stream_id,
-                message: format!("unsupported TTS engine: {other}"),
-            },
-        );
-        return;
-    }
-
-    // Per-turn `{{VOICE: ...}}` acting direction, merged behind the
-    // persona's base register. `None` → server default.
-    let merged_instruct = voice.merged_instruct(instruct.as_deref());
-
-    let body = match voice.engine {
-        "voxcpm" => serde_json::json!({
-            "input": text,
-            "engine": voice.engine,
-            "language": voice.language,
-            // `/api/v1/audio/speech` maps the wire `voice` field to the
-            // backend's Voice Design for voxcpm (see VoiceConfig::speaker).
-            "voice": voice.speaker,
-            "speed": voice.speed,
-            // Serializes to null when there's no direction; the backend
-            // proxy's Option<String> maps null → server default instruct.
-            "instruct": merged_instruct,
-        }),
-        "voicevox" => {
-            // VoiceVox uses numeric speaker ids; the persona constant
-            // stores them as a string for uniformity, so parse here.
-            let speaker_id: i64 = voice.speaker.parse().unwrap_or(1);
-            serde_json::json!({
-                "input": text,
-                "engine": voice.engine,
-                "voice": speaker_id.to_string(),
-                "speed": voice.speed,
-            })
-        }
-        "irodori" => serde_json::json!({
-            "input": text,
-            "engine": voice.engine,
-            "speed": voice.speed,
-            "num_steps": 20,
-        }),
-        _ => unreachable!(),
-    };
+    let body = speech::audio_body(&text, instruct.as_deref(), &voice);
 
     let client = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
+        .timeout(std::time::Duration::from_secs(300))
         .build()
     {
         Ok(c) => c,

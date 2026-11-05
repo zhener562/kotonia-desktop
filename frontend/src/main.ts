@@ -33,6 +33,7 @@ interface Window {
     };
     dialog?: {
       open: (options: Record<string, unknown>) => Promise<string | null>;
+      save: (options: Record<string, unknown>) => Promise<string | null>;
     };
   };
   KotoniaSpeech: {
@@ -107,11 +108,12 @@ const profileResetPrompt = element<HTMLButtonElement>('profile-reset-prompt');
 // (`persona_info`). An empty saved prompt means "use the default", so a
 // later change to the default reaches users who never edited it.
 let promptDefaults = { system: '', eve: '' };
-invoke<{ default_system_prompt: string; eve_persona: string }>('persona_info')
+const personaInfoPromise = invoke<{ default_system_prompt: string; eve_persona: string; default_voice: DesktopVoiceConfig }>('persona_info')
   .then((info) => {
     promptDefaults = { system: info.default_system_prompt, eve: info.eve_persona };
+    return info;
   })
-  .catch((e) => appendLog('error', 'persona_info: ' + String(e)));
+  .catch((e) => { appendLog('error', 'persona_info: ' + String(e)); return null; });
 
 let sessionId = null;
 let pendingApprovalId = null;
@@ -119,6 +121,7 @@ let pendingApprovalId = null;
 // button between "send" and "cancel" so the user can stop a runaway
 // agent without restarting the app.
 let activeTaskId = null;
+let promptSubmissionPending = false;
 const browserStatus = element<HTMLDivElement>('browser-status');
 const browserStatusLabel = element<HTMLElement>('browser-status-label');
 const browserStatusPage = element<HTMLSpanElement>('browser-status-page');
@@ -255,10 +258,10 @@ async function pickProfileImage() {
   profileImagePathEl.textContent = picked;
 }
 
-function avatarIdForProfile() {
-  if (!profile.avatarPath) return 'eve';
+function avatarIdForProfile(character = profile) {
+  if (!character.avatarPath) return 'eve';
   let hash = 2166136261;
-  for (const char of profile.avatarPath) {
+  for (const char of character.avatarPath) {
     hash ^= char.charCodeAt(0);
     hash = Math.imul(hash, 16777619);
   }
@@ -286,6 +289,8 @@ function renderWorkspaceLabel() {
 }
 
 async function pickWorkspace() {
+  if (DesktopUI.switching) return;
+  await stopSpeech();
   const dialog = window.__TAURI__?.dialog;
   if (!dialog) {
     appendLog('error', 'ダイアログプラグインが見つかりません (tauri-plugin-dialog 未ロード?)');
@@ -324,6 +329,8 @@ async function pickWorkspace() {
     sessionId = null;
     sessionEngine = null;
     sessionWorkspace = null;
+    DesktopUI.sessionModel = null;
+    setSessionLabel();
   }
 }
 
@@ -398,7 +405,7 @@ const PATH_LINK_KINDS = new Set(['obs', 'final', 'bash', 'text', 'inspect']);
 // Accumulator for streamed `text` events between tool calls. We buffer
 // them so the Final event can hand a complete utterance to TTS in one
 // shot — speaking each chunk on arrival would cancel the previous
-// playback mid-sentence (every speakPersona call rotates the active
+// playback mid-sentence (each utterance rotates the active
 // stream_id, dropping any earlier in-flight chunks).
 let streamedTextBuffer = '';
 
@@ -414,9 +421,11 @@ function appendLog(kind, body) {
     `<pre class="body">${bodyHtml}</pre>`;
   logEl.appendChild(line);
   logEl.scrollTop = logEl.scrollHeight;
+  return line;
 }
 
 function setSessionLabel() {
+  DesktopUI.rememberSession();
   if (sessionId) {
     sessionLabelEl.textContent = `session: ${sessionId.slice(0, 12)}…`;
   } else {
@@ -453,11 +462,16 @@ async function releaseSessionBrowser(): Promise<boolean> {
 }
 
 async function startNewSession() {
+  if (DesktopUI.switching) return;
+  await stopSpeech();
+  DesktopUI.sessionModel = null;
   if (!(await releaseSessionBrowser())) return;
   sessionId = await invoke('new_session');
   sessionEngine = engineSelect.value;
   sessionWorkspace = currentWorkspace;
   setSessionLabel();
+  logEl.replaceChildren();
+  streamedTextBuffer = '';
   appendLog(
     'session-new',
     `── new session ${sessionId.slice(0, 8)} (engine: ${sessionEngine}, workspace: ${
@@ -590,6 +604,16 @@ async function respondApproval(approved) {
 }
 
 async function submitTask() {
+  if (promptSubmissionPending || DesktopUI.switching) return;
+  promptSubmissionPending = true;
+  try { await submitTaskOnce(); }
+  finally { promptSubmissionPending = false; }
+}
+
+async function submitTaskOnce() {
+  await DesktopUI.ready;
+  if (DesktopUI.switching) return;
+  await stopSpeech();
   const raw = promptInput.value;
   const prompt = raw.trim();
   if (!prompt) return;
@@ -637,23 +661,26 @@ async function submitTask() {
   const engine = engineSelect.value;
   const workspacePath = currentWorkspace; // null → backend uses default
   promptSubmit.disabled = true;
+  const submittingTaskId = crypto.randomUUID();
+  setActiveTask(submittingTaskId);
+  appendLog('task-submit', `あなた\n${prompt}`);
   try {
-    const res = await invoke('submit_task', {
+    await invoke('submit_task', {
       prompt,
       sessionId: sid,
-      model: null,
+      model: DesktopUI.sessionModel,
+      taskId: submittingTaskId,
+      desktopProfile: profile,
+      voice: DesktopUI.voice,
       engine,
       workspacePath,
       systemPrompt: profile.systemPrompt,
       persona: profile.persona,
       home: homeMode,
     });
-    appendLog(
-      'task-submit',
-      `▶ task ${res.task_id.slice(0, 8)} (session ${res.session_id.slice(0, 8)})\n${prompt}`,
-    );
+    DesktopUI.markSessionSaved(sid);
     promptInput.value = '';
-    setActiveTask(res.task_id);
+    // The task ID was installed before invoke; early events are already live.
   } catch (e) {
     appendLog('submit-error', String(e));
     setActiveTask(null);
@@ -676,6 +703,7 @@ function setActiveTask(taskId) {
 }
 
 async function cancelActiveTask() {
+  await stopSpeech();
   if (!activeTaskId) return true;
   const tid = activeTaskId;
   // Optimistically reset UI; an aborted tokio task won't emit `done`,
@@ -705,7 +733,7 @@ function submitOrCancel() {
   if (activeTaskId) {
     cancelActiveTask();
   } else {
-    submitTask();
+    void submitTask().catch((e) => appendLog('submit-error', String(e)));
   }
 }
 
@@ -743,7 +771,7 @@ btnClearLog.addEventListener('click', () => {
   logEl.innerHTML = '';
 });
 
-engineSelect.addEventListener('change', renderEngineWarning);
+engineSelect.addEventListener('change', () => { DesktopUI.sessionModel = null; void stopSpeech(); renderEngineWarning(); });
 btnWorkspace.addEventListener('click', pickWorkspace);
 btnProfile.addEventListener('click', openProfileEditor);
 profileCancel.addEventListener('click', () => profileModal.classList.add('hidden'));
@@ -758,6 +786,7 @@ profilePickImage.addEventListener('click', () => {
 });
 profileForm.addEventListener('submit', async (event) => {
   event.preventDefault();
+  await stopSpeech();
   const previousPrompt = `${profile.systemPrompt}\n${profile.persona}`;
   profile = {
     name: profileNameInput.value.trim() || 'Kotonia',
@@ -779,12 +808,16 @@ profileForm.addEventListener('submit', async (event) => {
     sessionEngine = null;
     sessionWorkspace = null;
     setSessionLabel();
+    DesktopUI.sessionModel = null;
     appendLog('session-new', 'profile prompt changed → starting a new session.');
+  } else if (DesktopUI.hasSavedSession() && DesktopUI.voice) {
+    try { await invoke('save_session_preferences', { sessionId, profile, voice: DesktopUI.voice }); }
+    catch (e) { appendLog('error', '会話のプロフィールを保存できません: ' + String(e)); }
   }
 });
 
 // ── TTS playback (Eve voice) ─────────────────────────────────────────
-// Toggle is OFF by default — autoplay policies in WebKit refuse to
+// Audio is initialized on a user gesture — autoplay policies in WebKit refuse to
 // schedule audio until a user gesture creates / resumes an
 // AudioContext. The toggle click doubles as that gesture.
 
@@ -811,6 +844,7 @@ function setVoiceEnabled(enabled) {
     if (ttsAudioCtx.state === 'suspended') ttsAudioCtx.resume();
     ttsNextStartTime = ttsAudioCtx.currentTime;
   } else {
+    void stopSpeech();
     if (ttsAudioCtx && ttsAudioCtx.state === 'running') {
       ttsAudioCtx.suspend().catch(() => {});
     }
@@ -1041,43 +1075,11 @@ avatarResizeHandle.addEventListener('pointerup', (e) => {
   resizeState = null;
 });
 
-// TTS-direction text cleanup. The displayed log keeps the full
-// original answer (with code blocks, paths, etc.) — these filters
-// only apply to what gets handed to the synthesizer, because reading
-// a 500-line HTML file or "スラッシュ ホーム スラッシュ ゼヘナ
-// スラッシュ ドット コトニア スラッシュ デスクトップ スラッシュ
-// ワークスペース スラッシュ シューティング ゲーム ドット エイチ
-// ティー エム エル" out loud is a UX disaster.
-//
-// Same regex as `linkifyPaths` — keep them in sync.
-const PATH_RE_FOR_SPEECH =
-  /(?<![\p{L}\p{N}_:/.])(?:(?:~\/|\.{1,2}\/|\/)[^\s'"`<>()\\[\]{}]+|[A-Za-z]:[\\/][^\s'"`<>()[\]{}]+)/gu;
-const TRAILING_PUNCT_FOR_SPEECH = /[.,:;)\]'"`]+$/;
-
-// URL detection. Run *before* the path filter so a URL's `/foo/bar`
-// tail doesn't get caught by the path regex first. The host (incl. port
-// — `localhost:8000` is meaningful) is kept; everything after the next
-// `/`, `?`, or `#` is dropped.
-const URL_RE_FOR_SPEECH = /\b(?:https?|wss?|ftp):\/\/[^\s'"`<>()\\[\]{}]+/giu;
-function extractSpeakableHost(url) {
-  const m = url.match(/^[a-z]+:\/\/([^/?#]+)/i);
-  return m ? m[1] : url;
-}
-
-// Speech-channel markers, mirroring the hage web contract:
-//   {{VOICE: ...}} — vocal-acting direction; rides the VoxCPM2 `instruct`.
-//   {{SPEAK: ...}} — the spoken channel override. When present, ONLY this is
-//     read aloud (the full answer stays on screen). Absent → the sanitized
-//     answer is spoken, i.e. today's behavior. This is the voice/text split:
-//     the model decides what belongs to the ear vs the screen.
-// Both sit at the start of the final answer, must never be spoken or shown,
-// and are matched globally + position-independently so stray copies also go.
+// Legacy markers are hidden in temporary streaming previews. Final display,
+// history, and speech all use the normalized blocks returned by Rust.
 const VOICE_MARKER_RE = /\{\{\s*VOICE\s*:\s*([\s\S]*?)\}\}/gi;
 const SPEAK_MARKER_RE = /\{\{\s*SPEAK\s*:\s*([\s\S]*?)\}\}/gi;
 
-// Pull the first {{VOICE}} direction and {{SPEAK}} override out of an agent
-// answer and return the text with every marker removed. `direction` → TTS
-// instruct; `spoken` → what to synthesize when set; `clean` → what to display.
 function extractSpeechMarkers(text) {
   let direction = null;
   let spoken = null;
@@ -1099,56 +1101,6 @@ function extractSpeechMarkers(text) {
     .replace(/\n{3,}/g, '\n\n')
     .trim();
   return { direction, spoken, clean };
-}
-
-function preprocessForSpeech(text) {
-  // First turn Markdown/HTML into readable prose. This is intentionally a
-  // shared boundary before every desktop TTS route (plain audio and Ditto),
-  // while the log keeps the original answer for copy/paste.
-  let cleaned = window.KotoniaSpeech.stripMarkdown(text);
-
-  // 1.5. Collapse URLs to their host. Must run before the path filter
-  //      so the URL's `/foo/bar` tail isn't treated as a separate path.
-  //      `https://github.com/zhener562/kotonia` → `github.com`,
-  //      `http://localhost:8000/api/v1/...` → `localhost:8000`.
-  cleaned = cleaned.replace(URL_RE_FOR_SPEECH, (match) => {
-    const trail = match.match(TRAILING_PUNCT_FOR_SPEECH);
-    const core = trail ? match.slice(0, -trail[0].length) : match;
-    const tail = trail ? trail[0] : '';
-    return extractSpeakableHost(core) + tail;
-  });
-
-  // 2. Collapse absolute / home / relative path tokens to their basename.
-  //    `/home/.../foo.html` → `foo.html`, `~/.kotonia/x.txt` → `x.txt`,
-  //    `./output/y.json` → `y.json`. Trailing sentence punctuation stays
-  //    outside the basename (`foo.html、` → `foo.html` + `、`).
-  cleaned = cleaned.replace(PATH_RE_FOR_SPEECH, (match) => {
-    const trail = match.match(TRAILING_PUNCT_FOR_SPEECH);
-    const core = trail ? match.slice(0, -trail[0].length) : match;
-    const tail = trail ? trail[0] : '';
-    // Split on `\` too for Windows drive tokens; unix tokens can't contain
-    // `\` (excluded from their regex body), so this is a no-op for them.
-    const segments = core.split(/[\\/]/).filter((s) => s.length > 0);
-    const basename = segments.pop();
-    // Fall back to the original token if there's nothing to read
-    // (a lone `/` or `~/`); cleaner than emitting an empty string.
-    return (basename && basename.length > 0 ? basename : core) + tail;
-  });
-
-  // 3. Hard cap on overall spoken length. Trim at the last sentence
-  //    boundary so the spoken version doesn't end mid-word.
-  cleaned = cleaned.trim();
-  if (cleaned.length > 1000) {
-    const head = cleaned.slice(0, 1000);
-    const lastStop = Math.max(
-      head.lastIndexOf('。'),
-      head.lastIndexOf('. '),
-      head.lastIndexOf('\n'),
-    );
-    cleaned = (lastStop > 200 ? head.slice(0, lastStop + 1) : head) +
-      ' (続きは画面で)';
-  }
-  return cleaned;
 }
 
 // Ditto-mode sync state.
@@ -1187,154 +1139,167 @@ function base64ToUint8Array(b64) {
   return bytes;
 }
 
-async function playAudioChunk(wavBytes) {
+// Every audio packet is decoded in arrival order; stream identity is checked
+// after async decode too, so stop/switch cannot schedule an obsolete buffer.
+let speechEpoch = 0;
+let audioDecodeQueue: Promise<void> = Promise.resolve();
+const activeAudioSources = new Set<AudioBufferSourceNode>();
+const pendingFrameTimers = new Set<ReturnType<typeof setTimeout>>();
+let audioFinishTimer: ReturnType<typeof setTimeout> | null = null;
+let streamWaiter: { id: string; resolve: (complete: boolean) => void; reject: (error: Error) => void } | null = null;
+let activeSpeechPortrait = '';
+
+function ensureAudioContext() {
+  if (!ttsAudioCtx) ttsAudioCtx = new AudioContext();
+  if (ttsAudioCtx.state === 'suspended') void ttsAudioCtx.resume();
+}
+
+async function stopSpeech(): Promise<number> {
+  const epoch = ++speechEpoch;
+  const streamToCancel = ttsActiveStreamId;
+  ttsActiveStreamId = null;
+  streamWaiter?.resolve(false); streamWaiter = null;
+  if (audioFinishTimer !== null) clearTimeout(audioFinishTimer);
+  audioFinishTimer = null;
+  for (const timer of pendingFrameTimers) clearTimeout(timer);
+  pendingFrameTimers.clear();
+  for (const source of activeAudioSources) { try { source.stop(); } catch {} }
+  activeAudioSources.clear();
+  audioDecodeQueue = Promise.resolve();
+  dittoAudioBuffer = []; dittoAwaitingFirstFrame = false; activeStreamWantsDitto = false;
+  ttsNextStartTime = ttsAudioCtx?.currentTime ?? 0;
+  avatarFloating.classList.remove('speaking');
+  setAvatarFrameSrc(profileAvatarSrc(), false);
+  document.querySelectorAll('.response-block.speaking').forEach((el) => el.classList.remove('speaking'));
+  element('btn-stop-speech').hidden = true;
+  DesktopUI.stopSamples();
+  await invoke('cancel_speech', { streamId: streamToCancel });
+  return epoch;
+}
+
+element('btn-stop-speech').addEventListener('click', () => { void stopSpeech().catch((e) => appendLog('error', String(e))); });
+
+function failSpeech(streamId: string, error: Error) {
+  if (streamId !== ttsActiveStreamId) return;
+  streamWaiter?.reject(error); streamWaiter = null;
+}
+
+function queueAudioChunk(bytes: Uint8Array, streamId: string) {
+  audioDecodeQueue = audioDecodeQueue.then(async () => {
+    if (streamId !== ttsActiveStreamId) return;
+    const context: AudioContext = ttsAudioCtx;
+    const buffer = await context.decodeAudioData(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer);
+    if (streamId !== ttsActiveStreamId) return;
+    const source = context.createBufferSource(); source.buffer = buffer; source.connect(context.destination);
+    activeAudioSources.add(source);
+    source.onended = () => { activeAudioSources.delete(source); source.disconnect(); };
+    const startAt = Math.max(ttsNextStartTime, context.currentTime + 0.01);
+    source.start(startAt); ttsNextStartTime = startAt + buffer.duration;
+  }).catch((e) => failSpeech(streamId, e instanceof Error ? e : new Error(String(e))));
+}
+
+async function playResponse(message: DesktopMessage, config: DesktopVoiceConfig, character = profile, audioOnly = false) {
+  ensureAudioContext();
+  const epoch = await stopSpeech();
+  if (epoch !== speechEpoch) return;
+  if (!config) throw new Error('声の設定が読み込まれていません');
+  const capturedVoice = JSON.parse(JSON.stringify(config));
+  const capturedCharacter = { ...character };
+  const useAvatar = avatarEnabled && !audioOnly;
+  const groups: { text: string; direction?: string; speaker?: string; indexes: number[] }[] = [];
+  for (const [index, block] of (message.response?.blocks ?? []).entries()) {
+    if (block.type !== 'speech') continue;
+    const text = window.KotoniaSpeech.stripMarkdown(block.text);
+    if (!text) continue;
+    const previous = groups[groups.length - 1];
+    if (previous && previous.direction === block.delivery && previous.speaker === block.speaker) {
+      previous.text += '\n\n' + text; previous.indexes.push(index);
+    } else groups.push({ text, direction: block.delivery, speaker: block.speaker, indexes: [index] });
+  }
+  const article = [...document.querySelectorAll<HTMLElement>('.response-message')].find((el) => el.dataset.messageId === message.id);
+  element('btn-stop-speech').hidden = false;
   try {
-    const audioBuffer = await ttsAudioCtx.decodeAudioData(wavBytes.buffer);
-    const source = ttsAudioCtx.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(ttsAudioCtx.destination);
-    const startAt = Math.max(ttsNextStartTime, ttsAudioCtx.currentTime + 0.01);
-    source.start(startAt);
-    ttsNextStartTime = startAt + audioBuffer.duration;
+    for (const group of groups) {
+      if (epoch !== speechEpoch) return;
+      const prepared = await invoke<DesktopPreparedSpeech>('prepare_speech', { text: group.text, voice: capturedVoice });
+      if (epoch !== speechEpoch) return;
+      article?.querySelectorAll<HTMLElement>('.response-block').forEach((part) => part.classList.toggle('speaking', group.indexes.includes(Number(part.dataset.blockIndex))));
+      for (const text of prepared.chunks) {
+        if (epoch !== speechEpoch) return;
+        const streamId = crypto.randomUUID();
+        ttsActiveStreamId = streamId;
+        dittoAudioBuffer = []; dittoAwaitingFirstFrame = useAvatar; activeStreamWantsDitto = useAvatar;
+        dittoStreamStartMs = 0; dittoFrameIndex = 0;
+        ttsNextStartTime = ttsAudioCtx.currentTime;
+        activeSpeechPortrait = capturedCharacter.avatarPath ? convertFileSrc(capturedCharacter.avatarPath) : 'persona/eve.png';
+        if (useAvatar) setAvatarFrameSrc(activeSpeechPortrait, false);
+        const completed = new Promise<boolean>((resolve, reject) => { streamWaiter = { id: streamId, resolve, reject }; });
+        // Register completion before invoke; even immediate errors and first
+        // packets are now correlated with an already-active stream.
+        const args = { text, voice: capturedVoice, instruct: group.direction, streamId,
+          ...(useAvatar ? { avatarId: avatarIdForProfile(capturedCharacter), avatarPath: capturedCharacter.avatarPath || null } : {}) };
+        void invoke(useAvatar ? 'ditto_speak' : 'tts_speak', args).catch((e) => failSpeech(streamId, new Error(String(e))));
+        if (!(await completed)) return;
+      }
+    }
   } catch (e) {
-    console.error('audio chunk play failed', e);
+    if (epoch === speechEpoch) { appendLog('error', '音声を再生できません: ' + String(e)); await stopSpeech(); }
+  } finally {
+    if (epoch === speechEpoch) {
+      ttsActiveStreamId = null; streamWaiter = null;
+      element('btn-stop-speech').hidden = true;
+      article?.querySelectorAll('.speaking').forEach((part) => part.classList.remove('speaking'));
+      avatarFloating.classList.remove('speaking'); setAvatarFrameSrc(profileAvatarSrc(), false);
+    }
   }
 }
 
-async function speakPersona(text) {
-  if (!voiceEnabled || !ttsAudioCtx) return;
-  // Peel off the speech markers first: {{VOICE}} → TTS instruct, {{SPEAK}} →
-  // the spoken override. Speak SPEAK when present, else the sanitized answer.
-  const { direction, spoken, clean } = extractSpeechMarkers(text || '');
-  const speakable = preprocessForSpeech(spoken || clean);
-  if (!speakable) return;
-  // Reset per-stream sync state BEFORE invoke, so any in-flight chunk
-  // from a previous stream that beats us to the listener is correctly
-  // discarded by the stream_id check.
-  dittoAudioBuffer = [];
-  dittoAwaitingFirstFrame = avatarEnabled;
-  activeStreamWantsDitto = avatarEnabled;
-  dittoStreamStartMs = 0;
-  dittoFrameIndex = 0;
-  try {
-    const command = avatarEnabled ? 'ditto_speak' : 'tts_speak';
-    const args = avatarEnabled
-      ? {
-          text: speakable,
-          instruct: direction || undefined,
-          avatarId: avatarIdForProfile(),
-          avatarPath: profile.avatarPath || null,
-        }
-      : { text: speakable, instruct: direction || undefined };
-    const streamId = await invoke(command, args);
-    ttsActiveStreamId = streamId;
-    // Reset the playback head so the new utterance starts immediately
-    // rather than queueing behind a previous (stale) stream that had
-    // advanced ttsNextStartTime into the future.
-    ttsNextStartTime = ttsAudioCtx.currentTime;
-  } catch (e) {
-    appendLog('error', 'TTS: ' + String(e));
-    activeStreamWantsDitto = false;
-    dittoAwaitingFirstFrame = false;
-  }
-}
-
-listen('tts_chunk', async (msg) => {
-  const payload = msg.payload;
-  if (!payload || payload.stream_id !== ttsActiveStreamId) return;
-  if (!ttsAudioCtx || ttsAudioCtx.state !== 'running') return;
-
-  const wavBytes = base64ToUint8Array(payload.wav_base64);
-
-  // Ditto path: hold audio until the first frame lands so face + voice
-  // start in lockstep. Pure-TTS path: schedule immediately.
-  if (activeStreamWantsDitto && dittoAwaitingFirstFrame) {
-    dittoAudioBuffer.push(wavBytes);
-    return;
-  }
-  await playAudioChunk(wavBytes);
+listen('tts_chunk', (msg) => {
+  const p = msg.payload;
+  if (!p || p.stream_id !== ttsActiveStreamId) return;
+  const bytes = base64ToUint8Array(p.wav_base64);
+  if (activeStreamWantsDitto && dittoAwaitingFirstFrame) dittoAudioBuffer.push(bytes);
+  else queueAudioChunk(bytes, p.stream_id);
 });
 
-listen('ditto_frame', async (msg) => {
-  const payload = msg.payload;
-  if (!payload || payload.stream_id !== ttsActiveStreamId) return;
-
-  const blob = new Blob([base64ToUint8Array(payload.jpeg_base64)], {
-    type: 'image/jpeg',
-  });
-
-  // First frame: flush whatever audio chunks we've been holding so
-  // they start playing in the same tick the frame becomes visible.
-  // Also pin the wall-clock origin for the subsequent FPS-paced
-  // display scheduling — every later frame is timed relative to here.
+listen('ditto_frame', (msg) => {
+  const p = msg.payload;
+  if (!p || p.stream_id !== ttsActiveStreamId || !activeStreamWantsDitto) return;
   if (dittoAwaitingFirstFrame) {
     dittoAwaitingFirstFrame = false;
-    ttsNextStartTime = ttsAudioCtx ? ttsAudioCtx.currentTime : 0;
-    for (const wavBytes of dittoAudioBuffer.splice(0)) {
-      await playAudioChunk(wavBytes);
-    }
-    dittoStreamStartMs = performance.now();
-    dittoFrameIndex = 0;
+    ttsNextStartTime = ttsAudioCtx.currentTime;
+    for (const bytes of dittoAudioBuffer.splice(0)) queueAudioChunk(bytes, p.stream_id);
+    dittoStreamStartMs = performance.now(); dittoFrameIndex = 0;
   }
-
-  if (!avatarEnabled) return; // toggle flipped off mid-stream
-
-  // Pace frame display to a fixed FPS instead of "as soon as bytes
-  // arrive". Without this the ditto server's bursty GPU output (50
-  // frames in 200 ms) would display all frames before the audio —
-  // which is queued into the AudioContext future — actually plays,
-  // and the face would freeze on the last frame for the remaining
-  // seconds of audio.
-  const myFrameIndex = dittoFrameIndex++;
-  const targetMs = dittoStreamStartMs + (myFrameIndex * 1000) / DITTO_FPS;
-  const delayMs = Math.max(0, targetMs - performance.now());
-  const streamIdAtSchedule = ttsActiveStreamId;
-
-  setTimeout(() => {
-    // Bail if a new speak superseded us before this frame's slot.
-    if (ttsActiveStreamId !== streamIdAtSchedule) return;
-    if (!avatarEnabled) return;
-    const url = URL.createObjectURL(blob);
-    setAvatarFrameSrc(url, /*isBlob*/ true);
-    avatarFloating.classList.add('speaking');
-  }, delayMs);
+  const blob = new Blob([base64ToUint8Array(p.jpeg_base64)], { type: 'image/jpeg' });
+  const delay = Math.max(0, dittoStreamStartMs + (dittoFrameIndex++ * 1000) / DITTO_FPS - performance.now());
+  const timer = setTimeout(() => {
+    pendingFrameTimers.delete(timer);
+    if (p.stream_id !== ttsActiveStreamId || !avatarEnabled) return;
+    setAvatarFrameSrc(URL.createObjectURL(blob), true); avatarFloating.classList.add('speaking');
+  }, delay);
+  pendingFrameTimers.add(timer);
 });
 
 listen('tts_error', (msg) => {
-  if (msg.payload?.stream_id !== ttsActiveStreamId) return;
-  appendLog('error', `TTS: ${msg.payload?.message ?? 'unknown error'}`);
-  // Clean up sync state so the next stream isn't stuck waiting.
-  dittoAwaitingFirstFrame = false;
-  activeStreamWantsDitto = false;
-  dittoAudioBuffer = [];
+  if (msg.payload?.stream_id === ttsActiveStreamId) failSpeech(msg.payload.stream_id, new Error(msg.payload.message ?? 'unknown TTS error'));
 });
 
-listen('tts_done', (msg) => {
-  if (msg.payload?.stream_id !== ttsActiveStreamId) return;
-  if (!activeStreamWantsDitto) return;
-
-  const closingStreamId = msg.payload.stream_id;
-
-  // `tts_done` fires the moment the upstream stream body closes, NOT
-  // when the audio finishes playing. We've been queueing chunks into
-  // the AudioContext scheduler — `ttsNextStartTime` is the absolute
-  // ctx-time at which the LAST queued chunk ends. Compute the gap
-  // between "now" and "audio actually done" and defer the avatar
-  // revert until then (plus a small tail so the mouth doesn't snap
-  // shut on the final phoneme).
-  const remainingMs = ttsAudioCtx
-    ? Math.max(0, (ttsNextStartTime - ttsAudioCtx.currentTime) * 1000)
-    : 0;
-  const tailMs = 300;
-
-  setTimeout(() => {
-    // Skip the revert if a new stream has started in the meantime —
-    // we don't want to clobber a fresh speak that the user fired
-    // before the previous audio finished draining.
-    if (ttsActiveStreamId !== closingStreamId) return;
-    avatarFloating.classList.remove('speaking');
-    setAvatarFrameSrc(profileAvatarSrc(), /*isBlob*/ false);
-  }, remainingMs + tailMs);
+listen('tts_done', async (msg) => {
+  const streamId = msg.payload?.stream_id;
+  if (streamId !== ttsActiveStreamId) return;
+  // A stream with audio but no video is still audible; never strand its queue.
+  if (dittoAwaitingFirstFrame) {
+    dittoAwaitingFirstFrame = false;
+    for (const bytes of dittoAudioBuffer.splice(0)) queueAudioChunk(bytes, streamId);
+  }
+  await audioDecodeQueue;
+  if (streamId !== ttsActiveStreamId) return;
+  const remainingMs = Math.max(0, (ttsNextStartTime - ttsAudioCtx.currentTime) * 1000);
+  audioFinishTimer = setTimeout(() => {
+    if (streamId !== ttsActiveStreamId) return;
+    const waiter = streamWaiter; streamWaiter = null; waiter?.resolve(true);
+  }, remainingMs + 20);
 });
 
 listen('ditto_register_error', (msg) => {
@@ -1701,7 +1666,7 @@ btnTogglePreview.addEventListener('click', togglePreview);
 // Render incoming agent events.
 listen('agent_event', (msg) => {
   const ev = msg.payload?.event;
-  if (!ev) return;
+  if (!ev || msg.payload?.task_id !== activeTaskId) return;
   switch (ev.kind) {
     case 'browser': {
       // Ignore late browser events from a task that the user has stopped.
@@ -1728,7 +1693,7 @@ listen('agent_event', (msg) => {
       // so the final-step extraction still finds VOICE/SPEAK (claude-code
       // path speaks from the buffer, not `ev.answer`).
       const shown = extractSpeechMarkers(ev.text).clean;
-      if (shown) appendLog('text', shown);
+      if (shown) { const row = appendLog('text', shown); row.dataset.streamTask = msg.payload.task_id; }
       streamedTextBuffer += (streamedTextBuffer ? '\n\n' : '') + ev.text;
       break;
     }
@@ -1757,14 +1722,16 @@ listen('agent_event', (msg) => {
       break;
     }
     case 'final': {
-      // Claude Code streams its text via `text` events; the `final`
-      // body arrives empty in that path (claude_code.rs dedups it).
-      // Fall back to the streamed buffer so TTS still has content.
-      const spoken = ev.answer || streamedTextBuffer;
-      const cleanAnswer = ev.answer ? extractSpeechMarkers(ev.answer).clean : '';
-      const display = cleanAnswer ? `══ final ══\n${cleanAnswer}` : '══ final ══';
-      appendLog('final', display);
-      speakPersona(spoken);
+      for (const row of logEl.querySelectorAll<HTMLElement>('[data-stream-task]')) {
+        if (row.dataset.streamTask === msg.payload.task_id) row.remove();
+      }
+      const message: DesktopMessage = ev.message ?? {
+        id: msg.payload.task_id,
+        role: 'assistant', content: ev.answer || streamedTextBuffer,
+        response: ev.response, voice: ev.voice ?? DesktopUI.voice,
+      };
+      DesktopUI.renderResponse(message);
+      if (voiceEnabled) void playResponse(message, message.voice ?? DesktopUI.voice).catch((e) => appendLog('error', String(e)));
       streamedTextBuffer = '';
       break;
     }
@@ -1808,6 +1775,8 @@ listen('agent_event', (msg) => {
       appendLog('info', `[unknown event] ${JSON.stringify(ev)}`);
   }
 });
+
+listen('history_error', (msg) => { appendLog('error', '会話を保存できません: ' + String(msg.payload?.message)); });
 
 listen('approval_request', (msg) => {
   if (msg.payload) showApproval(msg.payload);
@@ -2149,7 +2118,7 @@ listen('site_request', (msg) => {
 });
 
 renderHomeButtons();
-if (homeMode) void startHomeRunner();
+// Home runner startup follows the restored conversation in DesktopUI.init.
 
 // Boot.
 loadPersona();
@@ -2159,7 +2128,7 @@ try {
 } catch {}
 setOutputMode(initialOutputMode);
 window.addEventListener('pointerdown', () => {
-  if (voiceEnabled && ttsAudioCtx?.state === 'suspended') {
+  if ((voiceEnabled || ttsActiveStreamId) && ttsAudioCtx?.state === 'suspended') {
     ttsAudioCtx.resume().catch(() => {});
   }
 });
@@ -2168,3 +2137,4 @@ setInterval(refreshAuth, 60_000);
 setSessionLabel();
 renderWorkspaceLabel();
 void checkForUpdate();
+void DesktopUI.init();

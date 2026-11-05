@@ -14,7 +14,9 @@ use kotonia_cli::agent::provider::Provider;
 use kotonia_cli::agent::worktree::AgentWorkspace;
 
 use crate::bridge::{TauriApprovalHandler, TauriEventSink};
+use crate::speech::VoiceConfig;
 use crate::state::{AppState, RunningTask, SessionState};
+use crate::{history, speech};
 use kotonia_cli::home::workspace::HomeDir;
 
 /// Default model alias. Resolves through kotonia-cli's provider registry to
@@ -105,6 +107,7 @@ pub fn persona_info() -> serde_json::Value {
         // The profile editor pre-fills the default and offers Eve as a preset.
         "default_system_prompt": crate::persona::DEFAULT_SYSTEM_PROMPT,
         "eve_persona": crate::persona::EVE_PERSONA,
+        "default_voice": VoiceConfig::default(),
     })
 }
 
@@ -265,6 +268,68 @@ pub fn new_session() -> String {
     )
 }
 
+#[tauri::command]
+pub async fn list_sessions() -> Result<Vec<history::SessionSummary>, String> {
+    tokio::task::spawn_blocking(history::list)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn open_session(session_id: String) -> Result<history::Session, String> {
+    tokio::task::spawn_blocking(move || history::load(&session_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn export_session(session_id: String, output_path: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let session = history::load(&session_id)?;
+        std::fs::write(output_path, history::markdown(&session)).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn validate_voice(voice: VoiceConfig) -> Result<VoiceConfig, String> {
+    voice.validate()?;
+    Ok(voice)
+}
+
+#[tauri::command]
+pub fn save_session_preferences(
+    session_id: String,
+    profile: history::Profile,
+    voice: VoiceConfig,
+) -> Result<(), String> {
+    history::save_preferences(&session_id, profile, voice)
+}
+
+#[derive(Serialize)]
+pub struct PreparedSpeech {
+    plan: speech::SpeechPlan,
+    chunks: Vec<String>,
+}
+
+#[tauri::command]
+pub fn prepare_speech(text: String, voice: VoiceConfig) -> Result<PreparedSpeech, String> {
+    let plan = speech::plan(&text, &voice)?;
+    let chunks = speech::split_text(&plan.text);
+    Ok(PreparedSpeech { plan, chunks })
+}
+
+#[tauri::command]
+pub fn cancel_speech(state: State<'_, AppState>, stream_id: Option<String>) -> Result<(), String> {
+    state
+        .speech_tasks
+        .lock()
+        .map_err(|e| e.to_string())?
+        .cancel(stream_id);
+    Ok(())
+}
+
 #[derive(Serialize)]
 pub struct SubmitTaskResponse {
     pub task_id: String,
@@ -283,7 +348,16 @@ pub async fn submit_task(
     system_prompt: Option<String>,
     persona: Option<String>,
     home: Option<bool>,
+    desktop_profile: Option<history::Profile>,
+    voice: Option<VoiceConfig>,
+    task_id: Option<String>,
 ) -> Result<SubmitTaskResponse, String> {
+    history::validate_id(&session_id)?;
+    let voice = voice.unwrap_or_default();
+    voice.validate()?;
+    if let Some(task_id) = &task_id {
+        uuid::Uuid::parse_str(task_id).map_err(|_| "タスクIDが不正です")?;
+    }
     let choice = resolve_engine(engine.as_deref(), model.as_deref())?;
 
     // The hosted ReAct path needs a paired device_token. Claude Code runs
@@ -299,6 +373,26 @@ pub async fn submit_task(
     }
 
     let workspace_root = resolve_workspace(workspace_path.as_deref())?;
+    let context = history::SessionContext {
+        workspace: workspace_root.display().to_string(),
+        engine: if choice == EngineChoice::ClaudeCode {
+            "claude-code"
+        } else {
+            "react"
+        }
+        .into(),
+        model: model.clone().unwrap_or_else(|| {
+            if choice == EngineChoice::ClaudeCode {
+                "claude-code"
+            } else {
+                DEFAULT_MODEL
+            }
+            .into()
+        }),
+        profile: desktop_profile,
+        voice: voice.clone(),
+        home: home.unwrap_or(false),
+    };
     let session = get_or_create_session(
         &state,
         &session_id,
@@ -309,7 +403,8 @@ pub async fn submit_task(
         home.unwrap_or(false),
     )
     .await?;
-    let task_id = uuid::Uuid::new_v4().to_string();
+    history::begin_turn(&session_id, context, &prompt)?;
+    let task_id = task_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     // start/end per task, like one kotonia-cli run (labels only, never the
     // prompt). Before this the desktop sent none: the CLI sends them from its
     // main(), which the desktop does not go through.
@@ -329,11 +424,15 @@ pub async fn submit_task(
     let task_id_for_spawn = task_id.clone();
     let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let cancelled_for_spawn = cancelled.clone();
+    let history_session_id = session_id.clone();
 
     let work = tokio::spawn(async move {
         let mut sink = TauriEventSink {
             app: app_for_spawn.clone(),
             task_id: task_id_for_spawn.clone(),
+            session_id: history_session_id,
+            voice,
+            streamed_text: String::new(),
         };
         let mut approval = TauriApprovalHandler {
             app: app_for_spawn.clone(),
@@ -428,7 +527,7 @@ mod profile_tests {
         let prompt = session_prompt(Some("  my rules  "), Some("persona"));
         assert_eq!(prompt, format!("my rules\n\npersona\n\n{APP_CONTRACT}"));
         assert!(!prompt.contains(DEFAULT_SYSTEM_PROMPT));
-        assert!(prompt.contains("{{VOICE:"));
+        assert!(prompt.contains("Speech blocks are BOTH displayed and read aloud"));
     }
 }
 
@@ -486,83 +585,107 @@ pub async fn stt_transcribe(wav_base64: String) -> Result<crate::stt::Transcribe
     crate::stt::transcribe(wav_base64).await
 }
 
-/// Speak `text` with Eve's voice **plus** Ditto lip-sync video.
-/// Same `stream_id` correlation as `tts_speak`; the frontend swaps
-/// the static avatar image for the JPEG frame stream as `ditto_frame`
-/// events arrive. Audio still flows through the `tts_chunk` event,
-/// but with the explicit warning that the JS side should *buffer*
-/// audio until the first `ditto_frame` lands so face + voice start
-/// together (frame generation is slower than audio synthesis).
-#[tauri::command]
-pub async fn ditto_speak(
+/// Start a cancellable utterance. The frontend chooses its stream ID before
+/// invoking so even the first chunk/error can be correlated without a race.
+async fn launch_speech(
     app: AppHandle,
+    state: State<'_, AppState>,
     text: String,
     instruct: Option<String>,
-    avatar_id: Option<String>,
-    avatar_path: Option<String>,
+    voice: Option<VoiceConfig>,
+    stream_id: String,
+    avatar: Option<(String, Option<String>)>,
 ) -> Result<String, String> {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return Err("空文字は読めません".into());
+    uuid::Uuid::parse_str(&stream_id).map_err(|_| "音声ストリームIDが不正です")?;
+    let voice = voice.unwrap_or_default();
+    let prepared = speech::plan(&text, &voice)?;
+    if prepared.text.chars().count() > 4000 {
+        return Err("音声は4000文字以内の区間に分割してください".into());
     }
-    let stream_id = uuid::Uuid::new_v4().to_string();
-    let text_owned = trimmed.to_string();
-    let resolved_avatar_id = avatar_id
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| crate::persona::EVE.avatar_id.to_string());
-    if let Some(image_path) = avatar_path
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        crate::ditto::register_avatar_file(&resolved_avatar_id, image_path).await?;
+    let tasks = state.speech_tasks.clone();
+    let mut registry = tasks.lock().map_err(|e| e.to_string())?;
+    if registry.was_cancelled(&stream_id) {
+        return Err("音声を停止しました".into());
     }
     let stream_for_task = stream_id.clone();
-    let app_for_task = app.clone();
+    let work = tokio::spawn(async move {
+        if let Some((avatar_id, avatar_path)) = avatar {
+            if let Some(path) = avatar_path.filter(|s| !s.trim().is_empty()) {
+                if let Err(error) = crate::ditto::register_avatar_file(&avatar_id, &path).await {
+                    let _ = app.emit(
+                        "tts_error",
+                        serde_json::json!({"stream_id": stream_for_task, "message": error}),
+                    );
+                    return;
+                }
+            }
+            crate::ditto::run_stream(
+                app,
+                stream_for_task,
+                prepared.text,
+                instruct,
+                avatar_id,
+                voice,
+            )
+            .await;
+        } else {
+            crate::tts::run_stream(app, stream_for_task, prepared.text, instruct, voice).await;
+        }
+    });
+    registry
+        .running
+        .insert(stream_id.clone(), work.abort_handle());
+    drop(registry);
+    let cleanup_id = stream_id.clone();
     tokio::spawn(async move {
-        crate::ditto::run_stream(
-            app_for_task,
-            stream_for_task,
-            text_owned,
-            instruct,
-            resolved_avatar_id,
-            &crate::persona::EVE.voice,
-        )
-        .await;
+        let _ = work.await;
+        if let Ok(mut tasks) = tasks.lock() {
+            tasks.running.remove(&cleanup_id);
+        }
     });
     Ok(stream_id)
 }
 
-/// Speak text in Eve's voice. Returns the `stream_id` immediately so
+#[tauri::command]
+pub async fn ditto_speak(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    text: String,
+    instruct: Option<String>,
+    avatar_id: Option<String>,
+    avatar_path: Option<String>,
+    voice: Option<VoiceConfig>,
+    stream_id: String,
+) -> Result<String, String> {
+    let avatar_id = avatar_id
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| crate::persona::EVE.avatar_id.to_string());
+    launch_speech(
+        app,
+        state,
+        text,
+        instruct,
+        voice,
+        stream_id,
+        Some((avatar_id, avatar_path)),
+    )
+    .await
+}
+
+/// Speak with the resolved runtime voice. Returns the `stream_id` so
 /// the frontend can correlate the streamed `tts_chunk` / `tts_done` /
 /// `tts_error` events to this call (and ignore any in-flight events
 /// from a previous, now-cancelled stream).
 #[tauri::command]
 pub async fn tts_speak(
     app: AppHandle,
+    state: State<'_, AppState>,
     text: String,
     instruct: Option<String>,
+    voice: Option<VoiceConfig>,
+    stream_id: String,
 ) -> Result<String, String> {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return Err("空文字は読めません".into());
-    }
-    let stream_id = uuid::Uuid::new_v4().to_string();
-    let text_owned = trimmed.to_string();
-    let stream_for_task = stream_id.clone();
-    let app_for_task = app.clone();
-    tokio::spawn(async move {
-        crate::tts::run_stream(
-            app_for_task,
-            stream_for_task,
-            text_owned,
-            instruct,
-            &crate::persona::EVE.voice,
-        )
-        .await;
-    });
-    Ok(stream_id)
+    launch_speech(app, state, text, instruct, voice, stream_id, None).await
 }
 
 /// Open a URL in the system's default browser. Used by the login flow to

@@ -24,7 +24,8 @@ use futures_util::StreamExt;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::persona::{Persona, VoiceConfig};
+use crate::persona::Persona;
+use crate::speech::{self, VoiceConfig};
 use crate::state::AppState;
 
 #[derive(Serialize, Clone)]
@@ -206,7 +207,7 @@ pub async fn run_stream(
     text: String,
     instruct: Option<String>,
     avatar_id: String,
-    voice: &'static VoiceConfig,
+    voice: VoiceConfig,
 ) {
     if avatar_id == crate::persona::EVE.avatar_id {
         if let Err(message) = ensure_avatar_ready(&app, &crate::persona::EVE).await {
@@ -235,24 +236,7 @@ pub async fn run_stream(
         }
     };
 
-    // Per-turn `{{VOICE: ...}}` acting direction, merged behind the
-    // persona's base register. The ditto→TTS proxy forwards `instruct`
-    // for voxcpm. `None` → server default.
-    let merged_instruct = voice.merged_instruct(instruct.as_deref());
-    let body = serde_json::json!({
-        "text": text,
-        "avatar_id": avatar_id,
-        "tts_backend": voice.engine,
-        "language": voice.language,
-        // python ditto server expects single-letter `lang` too (j/a/z).
-        "lang": match voice.language { "ja" => "j", "en" => "a", "zh" => "z", other => other },
-        "speed": voice.speed,
-        // VoxCPM2's voice is a Voice Design, carried in the `design`
-        // field (the ditto server ignores `speaker` for voxcpm).
-        "design": voice.speaker,
-        "instruct": merged_instruct,
-        "fps": 25,
-    });
+    let body = speech::avatar_body(&text, instruct.as_deref(), &voice, &avatar_id);
 
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(600))

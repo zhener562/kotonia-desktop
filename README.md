@@ -45,6 +45,10 @@ cargo tauri dev   # TypeScript frontend is compiled automatically
 - approval mode: `allowlist` (gates destructive shell commands)
 - session history persisted to `~/.kotonia/sessions/<id>.jsonl`
   (auto-resumed on session id reuse)
+- **履歴** opens saved conversations, restores the workspace, engine, profile
+  and voice, and exports the complete conversation as Markdown. The last saved
+  conversation is restored on startup. Existing CLI/Desktop JSONL logs remain
+  readable. New Desktop display records live in `~/.kotonia/desktop/sessions/`.
 - multi-turn within one session id; `新規` button starts a fresh session
 - **Editable profile** from the header: display name, tagline, additional
   system prompt, personality/speaking style, and a local PNG/JPEG/WebP face.
@@ -53,6 +57,18 @@ cargo tauri dev   # TypeScript frontend is compiled automatically
   for both the still portrait and lip-sync stream.
 - **Text / Voice / Avatar output modes** in one selector. Voice is audio-only;
   Avatar adds the movable lip-sync portrait. The choice persists across runs.
+- **声** selects VoxCPM2, Irodori or VoiceVox, with saved reference voices,
+  samples, voice design, three candidate voices, seeds, language and speed.
+  Audio-only and Avatar use the same runtime settings. Replies can be replayed
+  with their original voice or the currently selected voice.
+- **One response for screen and speech**: spoken blocks are visible in the
+  transcript; code and artifacts are screen-only. There is no separate hidden
+  summary or 1000-character cutoff. **音声停止** stops queued audio, pending
+  video frames and the in-flight client request.
+- **Irodori pronunciation**: English names use a built-in reading dictionary
+  plus editable `English=カナ` overrides. Unknown words are spelled out instead
+  of being guessed. **読みを確認** shows the actual speech text and replacements;
+  the original written text is preserved.
 - **Ctrl+click (macOS は Cmd+click) で path を OS の既定アプリで開く**:
   observation / final-answer / bash 行のテキストを path-shaped token で
   scan して clickable span にする。`/`, `~/`, `./`, `../` で始まるトークン
@@ -101,6 +117,9 @@ headless Chrome against localhost. Desktop frontend checks: `npm test`.
 
 Release order: publish `kotonia-cli v0.1.16` first, then build/release Desktop.
 The desktop workflow pins that CLI tag, and its lockfile records the same version.
+
+History/voice behavior, storage compatibility and validation commands are
+documented in [docs/CONVERSATION_AND_VOICE.md](docs/CONVERSATION_AND_VOICE.md).
 
 ## Prerequisites
 
