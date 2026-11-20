@@ -13,7 +13,12 @@ permissions:
 # Same pin as kotonia-cli's release.yml; move both together, and only to a
 # build that has been public for 7 days.
 env:
-  BUSYBOX_URL: https://frippery.org/files/busybox/busybox-w64-FRP-6354-g5f09fb446.exe
+  # Our own mirror first (an unmodified copy plus its source, release
+  # `busybox-FRP-6354` of kotonia-cli): frippery.org returns 403 to some
+  # GitHub runners (2026-11-20, v0.1.17's Windows build failed 4 times).
+  # The hash check below is what makes either copy trustworthy.
+  BUSYBOX_URL: https://github.com/zhener562/kotonia-cli/releases/download/busybox-FRP-6354/busybox-w64-FRP-6354-g5f09fb446.exe
+  BUSYBOX_URL_UPSTREAM: https://frippery.org/files/busybox/busybox-w64-FRP-6354-g5f09fb446.exe
   BUSYBOX_SHA256: 95343c871869cc0ab57ecec26b2f9af0370eb9c954f7e5ddd017163e4e0d09a0
 
 jobs:
@@ -45,9 +50,9 @@ jobs:
           # Pin the dependency so rerunning a desktop tag reproduces the
           # original binary. Update this tag intentionally when taking a new
           # kotonia-cli release into kotonia-desktop.
-          # v0.1.16 — stop advertising the retired video API to the agent.
+          # v0.1.18 — smart approval mode (model safety review), busybox mirror.
           # Publish the CLI tag before building/releasing this desktop version.
-          ref: v0.1.16
+          ref: v0.1.18
           path: kotonia-cli
 
       - name: Install Node.js
@@ -90,7 +95,7 @@ jobs:
         shell: pwsh
         run: |
           $out = 'kotonia-desktop/src-tauri/resources/busybox.exe'
-          Invoke-WebRequest -Uri $env:BUSYBOX_URL -OutFile $out
+          try { Invoke-WebRequest -Uri $env:BUSYBOX_URL -OutFile $out } catch { Invoke-WebRequest -Uri $env:BUSYBOX_URL_UPSTREAM -OutFile $out }
           $hash = (Get-FileHash $out -Algorithm SHA256).Hash.ToLower()
           if ($hash -ne $env:BUSYBOX_SHA256) { throw "busybox sha256 mismatch: $hash" }
 
