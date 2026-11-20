@@ -50,9 +50,9 @@ jobs:
           # Pin the dependency so rerunning a desktop tag reproduces the
           # original binary. Update this tag intentionally when taking a new
           # kotonia-cli release into kotonia-desktop.
-          # v0.1.18 — smart approval mode (model safety review), busybox mirror.
+          # v0.1.19 — web_search through kotonia.ai /api/v1/search.
           # Publish the CLI tag before building/releasing this desktop version.
-          ref: v0.1.18
+          ref: v0.1.19
           path: kotonia-cli
 
       - name: Install Node.js
