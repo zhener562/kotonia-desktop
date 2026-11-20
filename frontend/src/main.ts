@@ -89,6 +89,17 @@ const previewClose = element<HTMLButtonElement>('preview-close');
 const previewError = element<HTMLDivElement>('preview-error');
 const previewErrorMsg = element<HTMLPreElement>('preview-error-msg');
 const engineSelect = element<HTMLSelectElement>('engine-select');
+const approvalSelect = element<HTMLSelectElement>('approval-select');
+// The approval mode is read on every submit, so a change applies from the
+// next task without starting a new session.
+const APPROVAL_LS_KEY = 'kotonia_desktop_approval_mode';
+try {
+  const saved = localStorage.getItem(APPROVAL_LS_KEY);
+  if (saved === 'allowlist' || saved === 'smart' || saved === 'all') approvalSelect.value = saved;
+} catch {}
+approvalSelect.addEventListener('change', () => {
+  try { localStorage.setItem(APPROVAL_LS_KEY, approvalSelect.value); } catch {}
+});
 const btnWorkspace = element<HTMLButtonElement>('btn-workspace');
 const workspacePathEl = element<HTMLSpanElement>('workspace-path');
 const profileModal = element<HTMLDivElement>('profile-modal');
@@ -677,6 +688,7 @@ async function submitTaskOnce() {
       systemPrompt: profile.systemPrompt,
       persona: profile.persona,
       home: homeMode,
+      approval: approvalSelect.value,
     });
     DesktopUI.markSessionSaved(sid);
     promptInput.value = '';

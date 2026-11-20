@@ -132,6 +132,7 @@ for (const browserName of (process.env.KOTONIA_E2E_BROWSERS || 'chromium,webkit'
         const submit = await page.evaluate(() => window.ipcCalls.find((c) => c.command === 'submit_task').args);
         assert.equal(submit.workspacePath, '/tmp/original'); assert.equal(submit.engine, 'claude-code');
         assert.equal(submit.voice.irodori_ref_id, 'ref-old'); assert.equal(submit.model, 'claude-code');
+        assert.equal(submit.approval, 'allowlist');
         await page.close();
       });
       await t.test('history loading/export failures are retryable without switching the conversation', async () => {

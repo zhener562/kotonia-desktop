@@ -30,6 +30,11 @@
       <button id="btn-history" type="button">履歴</button>
       <button id="btn-clear-log" type="button" title="ログをクリア">クリア</button>
       <button id="btn-mic" type="button" title="マイクで吹き込んで prompt 欄に転写 (Esc キャンセル)"><span id="btn-mic-icon">🎙️</span><span id="btn-mic-label">&nbsp;mic</span></button>
+      <select id="approval-select" title="コマンドを実行する前の確認。おまかせ = 許可リストに無いコマンドを AI が安全確認し、危なそうなときだけ聞く">
+        <option value="allowlist" selected>確認: 標準</option>
+        <option value="smart">確認: おまかせ</option>
+        <option value="all">確認: 毎回</option>
+      </select>
       <select id="output-mode" title="応答モードを切替">
         <option value="text" selected>Text</option>
         <option value="voice">Voice</option>

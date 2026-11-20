@@ -351,8 +351,17 @@ pub async fn submit_task(
     desktop_profile: Option<history::Profile>,
     voice: Option<VoiceConfig>,
     task_id: Option<String>,
+    approval: Option<String>,
 ) -> Result<SubmitTaskResponse, String> {
     history::validate_id(&session_id)?;
+    // The UI offers allowlist (default), smart and all. `auto` (no gating)
+    // stays a CLI flag: one click should not turn every check off.
+    let approval_mode = match approval.as_deref().unwrap_or("allowlist") {
+        "allowlist" => ApprovalMode::Allowlist,
+        "smart" => ApprovalMode::Smart,
+        "all" => ApprovalMode::All,
+        other => return Err(format!("unknown approval mode `{other}`")),
+    };
     let voice = voice.unwrap_or_default();
     voice.validate()?;
     if let Some(task_id) = &task_id {
@@ -444,6 +453,7 @@ pub async fn submit_task(
         };
 
         let mut guard = session.lock().await;
+        guard.agent.set_approval(approval_mode);
         let result = guard
             .agent
             .run_turn(&prompt, &mut approval, &mut sink)
