@@ -949,6 +949,8 @@ async fn get_or_create_session(
             // prepended to the agent's tool-aware base prompt so the bash /
             // tool semantics stay intact.
             agent_config.persona_prefix = Some(profile_prompt);
+            agent_config.final_answer_schema = Some(crate::response::schema());
+            agent_config.final_answer_validator = Some(crate::response::validate_final_answer);
             if home {
                 // Home mode = kotonia-cli's `--home`: the memory files and the
                 // connectors section first (who you are, what you remember),

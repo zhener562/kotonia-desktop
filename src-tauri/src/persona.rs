@@ -54,7 +54,7 @@ pub const DEFAULT_SYSTEM_PROMPT: &str = "You are a capable assistant running on 
 pub const APP_CONTRACT: &str = "[kotonia desktop conventions — always apply]
 
 Response format (every final answer):
-- Use the same structured response as Kotonia character chat. Put a JSON object in the final_answer tool's answer STRING, without Markdown fences:
+- Use the same structured response as Kotonia character chat. Pass a structured OBJECT as the final_answer tool's answer argument, without stringifying it or Markdown fences:
   {\"version\":1,\"blocks\":[{\"type\":\"speech\",\"speaker\":\"your display name\",\"text\":\"Your user-facing explanation\",\"delivery\":\"optional short acting direction\"},{\"type\":\"artifact\",\"text\":\"Paths, commands, code, tables, or detailed evidence\"}]}
 - Speech blocks are BOTH displayed and read aloud verbatim. Lead with the result in a speech block. There is no separate spoken summary: never emit SPEAK markers or a second invisible answer.
 - Artifact blocks are displayed but not automatically read. Put technical details there; keep the explanation in speech. Narration blocks may be used for unspoken scene descriptions.

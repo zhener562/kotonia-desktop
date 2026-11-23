@@ -35,6 +35,46 @@ pub struct Response {
     pub blocks: Vec<ResponseBlock>,
 }
 
+/// The API constrains the value itself, rather than JSON embedded in a string.
+/// No local refs: the schema can be embedded directly in a tool definition.
+/// Leave strings unconstrained here: Maya's XGrammar 0.2.3 string length/pattern
+/// conversion does not preserve JSON escapes. Validate blank text before delivery.
+pub fn schema() -> serde_json::Value {
+    use serde_json::json;
+    json!({
+        "type":"object", "properties":{
+            "version":{"type":"integer","const":1},
+            "blocks":{"type":"array","minItems":1,"items":{"anyOf":[
+                {"type":"object","properties":{
+                    "type":{"type":"string","const":"speech"},
+                    "speaker":{"type":"string"},
+                    "text":{"type":"string"},
+                    "delivery":{"type":"string"}
+                },"required":["type","speaker","text"],"additionalProperties":false},
+                {"type":"object","properties":{
+                    "type":{"type":"string","const":"narration"},
+                    "text":{"type":"string"}
+                },"required":["type","text"],"additionalProperties":false},
+                {"type":"object","properties":{
+                    "type":{"type":"string","const":"artifact"},
+                    "text":{"type":"string"}
+                },"required":["type","text"],"additionalProperties":false}
+            ]}}
+        },"required":["version","blocks"],"additionalProperties":false
+    })
+}
+
+/// Validate before the agent ends the turn, so malformed/blank replies can be
+/// corrected through the existing tool-result loop instead of becoming speech.
+pub fn validate_final_answer(value: &serde_json::Value) -> Result<(), String> {
+    let raw = match value {
+        serde_json::Value::String(text) => text.clone(),
+        value => value.to_string(),
+    };
+    parse_structured(&raw, None).map(|_| ()).ok_or_else(||
+        "final_answer.answer must be a version 1 response object with at least one speech, narration, or artifact block; every text must contain non-whitespace content. Return the corrected object.".into())
+}
+
 fn response_version() -> u8 {
     1
 }
@@ -169,6 +209,22 @@ pub fn normalize(raw: &str) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn final_answer_validation_rejects_blank_and_broken_ir_but_keeps_escapes() {
+        use serde_json::json;
+        for value in [
+            json!({"version":1,"blocks":[]}),
+            json!({"version":1,"blocks":[{"type":"speech","text":" \n\t"}]}),
+            json!({"version":2,"blocks":[{"type":"speech","text":"hello"}]}),
+            json!("{\"version\":1,\"blocks\":[]"),
+        ] {
+            assert!(validate_final_answer(&value).is_err());
+        }
+        let value = json!({"version":1,"blocks":[{"type":"artifact","text":"{\"message\":\"hello\"}\nC:\\tmp\\file"}]});
+        assert!(validate_final_answer(&value).is_ok());
+        assert!(validate_final_answer(&json!(value.to_string())).is_ok());
+    }
 
     #[test]
     fn web_blocks_and_delivery_survive_history_roundtrip() {

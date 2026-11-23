@@ -50,9 +50,9 @@ jobs:
           # Pin the dependency so rerunning a desktop tag reproduces the
           # original binary. Update this tag intentionally when taking a new
           # kotonia-cli release into kotonia-desktop.
-          # v0.1.19 — web_search through kotonia.ai /api/v1/search.
+          # v0.1.20 — structured final answers and grammar-constrained tools.
           # Publish the CLI tag before building/releasing this desktop version.
-          ref: v0.1.19
+          ref: v0.1.20
           path: kotonia-cli
 
       - name: Install Node.js
